@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Plus, Trash2, Radio, Send, ShoppingCart, Calendar, Book, Mic, Settings, Copy, RefreshCw, Volume2 } from 'lucide-react';
+import { Plus, Trash2, Radio, Send, ShoppingCart, Calendar, Book, Mic, Settings, Copy, RefreshCw, Volume2, Camera } from 'lucide-react';
 
 const DOC_PATH = ["artifacts", "rosie-family-pa-v2026", "public", "data"];
 const APP_URL = window.location.origin;
@@ -58,18 +58,17 @@ export default function App() {
     setIsGenerating(true);
     try {
       const genAI = new GoogleGenerativeAI(config.gemini);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `Create a short, cheerful 30-second family briefing. 
-      Groceries needed: ${data.groceries.join(", ")}. 
+      // UPGRADED TO GEMINI 2.0 FLASH
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const prompt = `You are Rosie, a warm family PA. Create a 30-second spoken briefing. 
+      Groceries: ${data.groceries.join(", ")}. 
       Schedule: ${data.plans.join(", ")}. 
-      Mention if anything is missing for soccer. Keep it natural and warm.`;
+      Mention if we need to prep anything for the kids or soccer. Use a helpful, cheerful tone.`;
       
       const result = await model.generateContent(prompt);
-      const briefing = result.response.text();
-      speak(briefing);
+      speak(result.response.text());
     } catch (e) { 
-      console.error("Radio Failure:", e);
-      speak("I'm having trouble connecting to the brain, but I'm still here for you.");
+      speak("Brain connection stuttered, but I'm still here.");
     }
     setIsGenerating(false);
   };
@@ -83,15 +82,16 @@ export default function App() {
 
     try {
       const genAI = new GoogleGenerativeAI(config.gemini);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const result = await model.generateContent(`Context: ${JSON.stringify(data)}. User: ${query}`);
+      // UPGRADED TO GEMINI 2.0 FLASH
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const result = await model.generateContent(`Context: ${JSON.stringify(data)}. User: ${query}. Respond as Rosie.`);
       await sync('messages', { role: 'rosie', text: result.response.text(), ts: new Date().toLocaleTimeString() });
     } catch (e) { console.error("AI Failure:", e); }
     setIsGenerating(false);
   };
 
   if (!config) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#EA4335] p-6 text-white text-center">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#EA4335] p-6 text-white text-center font-sans">
       <h1 className="text-4xl font-black mb-6 uppercase italic">Mount Rosie.</h1>
       <form onSubmit={(e) => {
         e.preventDefault();
@@ -117,9 +117,9 @@ export default function App() {
       </div>
       <div className="space-y-3 flex-1 overflow-y-auto pb-20">
         {items?.map((item, i) => (
-          <div key={i} className="flex justify-between items-center p-4 bg-white rounded-2xl shadow-sm group">
+          <div key={i} className="flex justify-between items-center p-4 bg-white rounded-2xl shadow-sm border border-gray-50">
             <span className="font-bold text-sm">{item}</span>
-            <button onClick={() => sync(field, item, 'remove')} className="text-[#EA4335] p-1 hover:scale-110 transition-transform"><Trash2 size={18} /></button>
+            <button onClick={() => sync(field, item, 'remove')} className="text-[#EA4335] p-1"><Trash2 size={18} /></button>
           </div>
         ))}
       </div>
@@ -139,7 +139,7 @@ export default function App() {
           <h1 className="text-2xl font-black italic tracking-tighter leading-none">ROSIE.</h1>
           <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#EA4335] mt-1">
             <span className={`w-1.5 h-1.5 bg-[#EA4335] rounded-full ${isSpeaking ? 'animate-ping' : 'animate-pulse'}`} />
-            {isSpeaking ? 'ROSIE_SPEAKING' : 'UPLINK_STABLE'}
+            {isSpeaking ? 'GEMINI_2.0_VOCAL' : 'GEMINI_2.0_READY'}
           </div>
         </div>
         <div className="flex gap-2">
@@ -164,20 +164,20 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'hub' && <Section title="Inventory" icon={ShoppingCart} items={data.groceries} field="groceries" placeholder="Need something?..." />}
-        {activeTab === 'plans' && <Section title="Family Calendar" icon={Calendar} items={data.plans} field="plans" placeholder="Add event..." />}
-        {activeTab === 'notebook' && <Section title="Shared Notes" icon={Book} items={data.memories} field="memories" placeholder="Save a thought..." />}
+        {activeTab === 'hub' && <Section title="Shopping List" icon={ShoppingCart} items={data.groceries} field="groceries" placeholder="Add to list..." />}
+        {activeTab === 'plans' && <Section title="Calendar" icon={Calendar} items={data.plans} field="plans" placeholder="Schedule event..." />}
+        {activeTab === 'notebook' && <Section title="Shared Notes" icon={Book} items={data.memories} field="memories" placeholder="Save memory..." />}
 
         {activeTab === 'settings' && (
-          <div className="space-y-6 animate-in zoom-in-95 duration-300">
-            <div className="bg-white p-6 rounded-[2.5rem] shadow-xl text-center">
-              <div className="inline-block p-4 bg-[#FFF8F0] rounded-3xl mb-4">
+          <div className="space-y-6 animate-in zoom-in-95 duration-300 text-center">
+            <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-gray-100">
+               <div className="inline-block p-4 bg-[#FFF8F0] rounded-3xl mb-4">
                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${APP_URL}`} alt="Invite" className="w-40 h-40 mix-blend-multiply" />
               </div>
               <h3 className="font-black text-xl tracking-tighter">Onboard Family</h3>
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-6">Scan to sync Mum's phone</p>
-              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(config)); alert("Config Copied!"); }} className="w-full flex items-center justify-center gap-2 p-4 bg-gray-50 rounded-2xl font-bold text-xs border border-gray-100"><Copy size={16} /> Copy Setup Payload</button>
-              <button onClick={() => { localStorage.removeItem('rosie_config'); window.location.reload(); }} className="w-full mt-4 text-red-500 font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-1"><RefreshCw size={12} /> Reset System</button>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-6 italic">Gemini 2.0 Flash Active</p>
+              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(config)); alert("Config Copied!"); }} className="w-full flex items-center justify-center gap-2 p-4 bg-gray-50 rounded-2xl font-bold text-xs"><Copy size={16} /> Copy Config</button>
+              <button onClick={() => { localStorage.removeItem('rosie_config'); window.location.reload(); }} className="w-full mt-4 text-red-500 font-black text-[10px] uppercase tracking-widest"><RefreshCw size={12} /> Reset System</button>
             </div>
           </div>
         )}
@@ -186,8 +186,8 @@ export default function App() {
       <footer className="p-6 bg-white/80 backdrop-blur-xl border-t border-gray-100 z-40">
         {activeTab === 'brain' && (
           <div className="mb-6 flex gap-2">
-            <input value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiChat()} placeholder="Command Rosie..." className="flex-1 p-4 bg-gray-100 rounded-full text-sm outline-none shadow-inner" />
-            <button onClick={handleAiChat} className="p-4 bg-[#EA4335] text-white rounded-full shadow-lg active:scale-90 transition-transform"><Send size={20} /></button>
+            <input value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiChat()} placeholder="Ask Rosie anything..." className="flex-1 p-4 bg-gray-100 rounded-full text-sm outline-none" />
+            <button onClick={handleAiChat} className="p-4 bg-[#EA4335] text-white rounded-full shadow-lg"><Send size={20} /></button>
           </div>
         )}
         <nav className="flex justify-around items-center">
