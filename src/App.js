@@ -8,8 +8,10 @@ const DOC_PATH = ["artifacts", "rosie-family-pa-v2026", "public", "data"];
 
 export default function App() {
   const [config, setConfig] = useState(() => {
-    const saved = localStorage.getItem('rosie_config');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('rosie_config');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
   });
 
   const [activeTab, setActiveTab] = useState('brain');
@@ -74,37 +76,37 @@ export default function App() {
   );
 
   const Section = ({ title, icon: Icon, items, field, placeholder }) => (
-    <div className="space-y-6">
+    <div className="space-y-6 flex flex-col h-full">
       <div className="flex justify-between items-center">
         <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 flex items-center gap-2">
           <Icon size={14} /> {title}
         </h2>
         <span className="text-[10px] font-bold bg-[#EA4335]/10 text-[#EA4335] px-2 py-0.5 rounded-full">{items?.length || 0}</span>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-3 flex-1 overflow-y-auto">
         {items?.map((item, i) => (
-          <div key={i} className="flex justify-between items-center p-4 bg-white rounded-2xl shadow-sm group animate-in fade-in slide-in-from-bottom-2">
+          <div key={i} className="flex justify-between items-center p-4 bg-white rounded-2xl shadow-sm group">
             <span className="font-bold text-sm">{item}</span>
             <button onClick={() => sync(field, item, 'remove')} className="text-[#EA4335] p-1"><Trash2 size={18} /></button>
           </div>
         ))}
       </div>
-      <div className="flex gap-2 sticky bottom-0">
+      <div className="flex gap-2 pt-4">
         <input id={`${field}-input`} className="flex-1 p-4 rounded-2xl shadow-inner bg-white text-sm" placeholder={placeholder} onKeyDown={(e) => {
           if (e.key === 'Enter' && e.target.value.trim()) { sync(field, e.target.value.trim()); e.target.value = ''; }
         }} />
-        <button onClick={() => { const el = document.getElementById(`${field}-input`); if (el.value.trim()) { sync(field, el.value.trim()); el.value = ''; }}} className="p-4 bg-[#EA4335] text-white rounded-2xl shadow-xl active:scale-90 transition-transform"><Plus size={24} /></button>
+        <button onClick={() => { const el = document.getElementById(`${field}-input`); if (el.value.trim()) { sync(field, el.value.trim()); el.value = ''; }}} className="p-4 bg-[#EA4335] text-white rounded-2xl shadow-xl"><Plus size={24} /></button>
       </div>
     </div>
   );
 
   return (
-    <div className="max-w-md mx-auto bg-[#FFF8F0] min-h-screen flex flex-col font-sans antialiased text-[#202124]">
+    <div className="max-w-md mx-auto bg-[#FFF8F0] h-[100dvh] flex flex-col font-sans antialiased text-[#202124]">
       <header className="p-6 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-black italic tracking-tighter">ROSIE.</h1>
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#EA4335]">
-            <span className="w-1.5 h-1.5 bg-[#EA4335] rounded-full animate-pulse" /> FAMILY_UPLINK_LIVE
+            <span className="w-1.5 h-1.5 bg-[#EA4335] rounded-full animate-pulse" /> LIVE_UPLINK
           </div>
         </div>
         <button className="p-3 bg-white rounded-full shadow-lg text-[#EA4335]"><Radio size={24} /></button>
@@ -126,11 +128,11 @@ export default function App() {
         {activeTab === 'notebook' && <Section title="Memories" icon={Book} items={data.memories} field="memories" placeholder="Save a note..." />}
       </main>
 
-      <footer className="p-6 bg-white/80 backdrop-blur-lg border-t border-gray-100">
+      <footer className="p-6 bg-white border-t border-gray-100">
         {activeTab === 'brain' && (
           <div className="mb-6 flex gap-2">
             <input value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiChat()} placeholder="Ask Rosie..." className="flex-1 p-4 bg-gray-100 rounded-full text-sm outline-none" />
-            <button onClick={handleAiChat} className="p-4 bg-[#EA4335] text-white rounded-full shadow-lg active:scale-90"><Send size={20} /></button>
+            <button onClick={handleAiChat} className="p-4 bg-[#EA4335] text-white rounded-full shadow-lg"><Send size={20} /></button>
           </div>
         )}
         <nav className="flex justify-around items-center">
