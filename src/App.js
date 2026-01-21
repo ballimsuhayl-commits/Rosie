@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Plus, Trash2, Radio, Send, ShoppingCart, Calendar, Book, Mic, Settings, Copy, RefreshCw, Volume2, Camera } from 'lucide-react';
+import { Plus, Trash2, Radio, Send, ShoppingCart, Calendar, Book, Mic, Settings, Copy, RefreshCw, Volume2, Camera, Loader2 } from 'lucide-react';
 
 const DOC_PATH = ["artifacts", "rosie-family-pa-v2026", "public", "data"];
-const APP_URL = window.location.origin;
 
 export default function App() {
   const [config, setConfig] = useState(() => {
@@ -20,6 +19,7 @@ export default function App() {
   const [inputText, setInputText] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const fileInputRef = useRef(null);
 
   const getDb = useCallback(() => {
     if (!config?.firebase) return null;
@@ -53,23 +53,47 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
+  const handleVision = async (e) => {
+    const file = e.target.files[0];
+    if (!file || isGenerating) return;
+    setIsGenerating(true);
+    
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result.split(',')[1];
+        const genAI = new GoogleGenerativeAI(config.gemini);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        
+        const result = await model.generateContent([
+          "Analyze this image. If it is a list of groceries or tasks, return them as a simple comma-separated list. If it's a scene, describe it briefly for the family notebook.",
+          { inlineData: { data: base64Data, mimeType: file.type } }
+        ]);
+
+        const text = result.response.text();
+        // Intelligent Routing: If it looks like a list, put it in groceries, else a memory
+        if (text.includes(',') || text.length < 50) {
+          const items = text.split(',').map(i => i.trim());
+          for (const item of items) await sync('groceries', item);
+        } else {
+          await sync('memories', `Vision Note: ${text}`);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (e) { console.error("Vision Error:", e); }
+    setIsGenerating(false);
+  };
+
   const handleRadio = async () => {
     if (isGenerating) return;
     setIsGenerating(true);
     try {
       const genAI = new GoogleGenerativeAI(config.gemini);
-      // UPGRADED TO GEMINI 2.0 FLASH
       const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-      const prompt = `You are Rosie, a warm family PA. Create a 30-second spoken briefing. 
-      Groceries: ${data.groceries.join(", ")}. 
-      Schedule: ${data.plans.join(", ")}. 
-      Mention if we need to prep anything for the kids or soccer. Use a helpful, cheerful tone.`;
-      
+      const prompt = `Family Briefing. Groceries: ${data.groceries.join(", ")}. Schedule: ${data.plans.join(", ")}. Keep it warm, under 30 seconds.`;
       const result = await model.generateContent(prompt);
       speak(result.response.text());
-    } catch (e) { 
-      speak("Brain connection stuttered, but I'm still here.");
-    }
+    } catch (e) { speak("I'm here, just a bit of signal interference."); }
     setIsGenerating(false);
   };
 
@@ -82,119 +106,117 @@ export default function App() {
 
     try {
       const genAI = new GoogleGenerativeAI(config.gemini);
-      // UPGRADED TO GEMINI 2.0 FLASH
       const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-      const result = await model.generateContent(`Context: ${JSON.stringify(data)}. User: ${query}. Respond as Rosie.`);
+      const result = await model.generateContent(`System: You are Rosie. Context: ${JSON.stringify(data)}. User: ${query}`);
       await sync('messages', { role: 'rosie', text: result.response.text(), ts: new Date().toLocaleTimeString() });
     } catch (e) { console.error("AI Failure:", e); }
     setIsGenerating(false);
   };
 
   if (!config) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#EA4335] p-6 text-white text-center font-sans">
-      <h1 className="text-4xl font-black mb-6 uppercase italic">Mount Rosie.</h1>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#EA4335] p-8 text-white text-center font-sans">
+      <h1 className="text-5xl font-black mb-8 italic tracking-tighter">ROSIE.</h1>
       <form onSubmit={(e) => {
         e.preventDefault();
         const fd = new FormData(e.target);
         const cfg = { gemini: fd.get('g'), firebase: JSON.parse(fd.get('f')) };
         localStorage.setItem('rosie_config', JSON.stringify(cfg));
         setConfig(cfg);
-      }} className="w-full max-w-xs space-y-4">
-        <input name="g" placeholder="Gemini API Key" className="w-full p-4 rounded-2xl text-black outline-none" required />
-        <textarea name="f" placeholder="Firebase JSON" className="w-full p-4 rounded-2xl text-black h-40 font-mono text-xs outline-none" required />
-        <button className="w-full p-4 bg-black rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-transform">Initialize</button>
+      }} className="w-full max-w-sm space-y-4">
+        <input name="g" placeholder="Gemini 2.0 API Key" className="w-full p-5 rounded-3xl text-black outline-none shadow-2xl" required />
+        <textarea name="f" placeholder="Firebase JSON Config" className="w-full p-5 rounded-3xl text-black h-48 font-mono text-xs outline-none shadow-2xl" required />
+        <button className="w-full p-5 bg-black rounded-3xl font-black uppercase tracking-[0.3em] active:scale-95 transition-all shadow-2xl">Initialize</button>
       </form>
     </div>
   );
 
   const Section = ({ title, icon: Icon, items, field, placeholder }) => (
-    <div className="space-y-6 flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-6 flex flex-col h-full animate-in fade-in duration-700">
       <div className="flex justify-between items-center">
         <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 flex items-center gap-2">
           <Icon size={14} /> {title}
         </h2>
         <span className="text-[10px] font-bold bg-[#EA4335]/10 text-[#EA4335] px-2 py-0.5 rounded-full">{items?.length || 0}</span>
       </div>
-      <div className="space-y-3 flex-1 overflow-y-auto pb-20">
+      <div className="space-y-3 flex-1 overflow-y-auto pb-24 pr-1">
         {items?.map((item, i) => (
-          <div key={i} className="flex justify-between items-center p-4 bg-white rounded-2xl shadow-sm border border-gray-50">
-            <span className="font-bold text-sm">{item}</span>
+          <div key={i} className="flex justify-between items-center p-5 bg-white rounded-[1.5rem] shadow-sm border border-gray-50 animate-in slide-in-from-bottom-2">
+            <span className="font-bold text-sm leading-tight">{item}</span>
             <button onClick={() => sync(field, item, 'remove')} className="text-[#EA4335] p-1"><Trash2 size={18} /></button>
           </div>
         ))}
       </div>
       <div className="flex gap-2 p-4 fixed bottom-24 left-0 right-0 max-w-md mx-auto z-20">
+        <button onClick={() => fileInputRef.current.click()} className="p-4 bg-white text-gray-400 rounded-2xl shadow-xl active:scale-90 transition-all border border-gray-100">
+          <Camera size={24} />
+        </button>
         <input id={`${field}-input`} className="flex-1 p-4 rounded-2xl shadow-xl bg-white text-sm outline-none border-none focus:ring-2 focus:ring-[#EA4335]" placeholder={placeholder} onKeyDown={(e) => {
           if (e.key === 'Enter' && e.target.value.trim()) { sync(field, e.target.value.trim()); e.target.value = ''; }
         }} />
-        <button onClick={() => { const el = document.getElementById(`${field}-input`); if (el.value.trim()) { sync(field, el.value.trim()); el.value = ''; }}} className="p-4 bg-[#EA4335] text-white rounded-2xl shadow-xl active:scale-90 transition-transform"><Plus size={24} /></button>
+        <button onClick={() => { const el = document.getElementById(`${field}-input`); if (el.value.trim()) { sync(field, el.value.trim()); el.value = ''; }}} className="p-4 bg-[#EA4335] text-white rounded-2xl shadow-xl active:scale-90 transition-all"><Plus size={24} /></button>
       </div>
+      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleVision} />
     </div>
   );
 
   return (
     <div className="max-w-md mx-auto bg-[#FFF8F0] h-[100dvh] flex flex-col font-sans antialiased text-[#202124] overflow-hidden">
-      <header className="p-6 flex justify-between items-center bg-white/70 backdrop-blur-md z-30">
+      <header className="p-6 flex justify-between items-center bg-white/70 backdrop-blur-md z-30 border-b border-gray-100/50">
         <div>
           <h1 className="text-2xl font-black italic tracking-tighter leading-none">ROSIE.</h1>
           <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#EA4335] mt-1">
-            <span className={`w-1.5 h-1.5 bg-[#EA4335] rounded-full ${isSpeaking ? 'animate-ping' : 'animate-pulse'}`} />
-            {isSpeaking ? 'GEMINI_2.0_VOCAL' : 'GEMINI_2.0_READY'}
+            <span className={`w-1.5 h-1.5 bg-[#EA4335] rounded-full ${isGenerating || isSpeaking ? 'animate-ping' : 'animate-pulse'}`} />
+            {isGenerating ? 'PROCESSING_VISION' : isSpeaking ? 'ROSIE_VOCAL' : 'GEMINI_2.0_LIVE'}
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setActiveTab('settings')} className={`p-3 rounded-full transition-all ${activeTab === 'settings' ? 'bg-[#EA4335] text-white shadow-lg' : 'bg-white text-gray-400 shadow-sm'}`}>
-            <Settings size={20} />
-          </button>
-          <button onClick={handleRadio} className={`p-3 rounded-full shadow-lg transition-all ${isSpeaking ? 'bg-[#EA4335] text-white animate-pulse' : 'bg-white text-[#EA4335]'}`}>
-            {isSpeaking ? <Volume2 size={20} /> : <Radio size={20} />}
-          </button>
+          <button onClick={() => setActiveTab('settings')} className={`p-3 rounded-full transition-all ${activeTab === 'settings' ? 'bg-[#EA4335] text-white shadow-lg' : 'bg-white text-gray-400 shadow-sm'}`}><Settings size={20} /></button>
+          <button onClick={handleRadio} className={`p-3 rounded-full shadow-lg transition-all ${isSpeaking ? 'bg-[#EA4335] text-white animate-pulse' : 'bg-white text-[#EA4335]'}`}>{isSpeaking ? <Volume2 size={20} /> : <Radio size={20} />}</button>
         </div>
       </header>
 
       <main className="flex-1 p-6 overflow-y-auto">
         {activeTab === 'brain' && (
-          <div className="space-y-4 pb-24">
+          <div className="space-y-4 pb-28">
             {data.messages?.map((m, i) => (
-              <div key={i} className={`p-4 rounded-2xl relative group shadow-sm max-w-[90%] animate-in slide-in-from-bottom-2 ${m.role === 'user' ? 'bg-[#EA4335] text-white ml-auto rounded-tr-none' : 'bg-white rounded-tl-none'}`}>
+              <div key={i} className={`p-5 rounded-[1.8rem] relative group shadow-sm max-w-[85%] animate-in slide-in-from-bottom-2 ${m.role === 'user' ? 'bg-[#EA4335] text-white ml-auto rounded-tr-none' : 'bg-white rounded-tl-none'}`}>
                 <p className="text-sm font-medium leading-relaxed">{m.text}</p>
-                <button onClick={() => sync('messages', m, 'remove')} className="absolute -left-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-2 text-gray-300 hover:text-red-500"><Trash2 size={16} /></button>
+                <button onClick={() => sync('messages', m, 'remove')} className="absolute -left-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-2 text-gray-300 hover:text-red-500"><Trash2 size={16} /></button>
               </div>
             ))}
+            {isGenerating && <div className="flex items-center gap-2 pl-2 text-[10px] font-black text-gray-300 uppercase tracking-widest"><Loader2 size={12} className="animate-spin" /> Brain Syncing...</div>}
           </div>
         )}
 
-        {activeTab === 'hub' && <Section title="Shopping List" icon={ShoppingCart} items={data.groceries} field="groceries" placeholder="Add to list..." />}
-        {activeTab === 'plans' && <Section title="Calendar" icon={Calendar} items={data.plans} field="plans" placeholder="Schedule event..." />}
-        {activeTab === 'notebook' && <Section title="Shared Notes" icon={Book} items={data.memories} field="memories" placeholder="Save memory..." />}
+        {activeTab === 'hub' && <Section title="Inventory" icon={ShoppingCart} items={data.groceries} field="groceries" placeholder="Add grocery..." />}
+        {activeTab === 'plans' && <Section title="Schedule" icon={Calendar} items={data.plans} field="plans" placeholder="Soccer practice?..." />}
+        {activeTab === 'notebook' && <Section title="Family Memories" icon={Book} items={data.memories} field="memories" placeholder="Save a moment..." />}
 
         {activeTab === 'settings' && (
-          <div className="space-y-6 animate-in zoom-in-95 duration-300 text-center">
-            <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-gray-100">
-               <div className="inline-block p-4 bg-[#FFF8F0] rounded-3xl mb-4">
-                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${APP_URL}`} alt="Invite" className="w-40 h-40 mix-blend-multiply" />
-              </div>
-              <h3 className="font-black text-xl tracking-tighter">Onboard Family</h3>
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-6 italic">Gemini 2.0 Flash Active</p>
-              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(config)); alert("Config Copied!"); }} className="w-full flex items-center justify-center gap-2 p-4 bg-gray-50 rounded-2xl font-bold text-xs"><Copy size={16} /> Copy Config</button>
-              <button onClick={() => { localStorage.removeItem('rosie_config'); window.location.reload(); }} className="w-full mt-4 text-red-500 font-black text-[10px] uppercase tracking-widest"><RefreshCw size={12} /> Reset System</button>
+          <div className="space-y-6 animate-in zoom-in-95 duration-500 text-center pt-4">
+            <div className="bg-white p-8 rounded-[3rem] shadow-2xl border border-gray-100">
+              <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${window.location.origin}`} alt="QR" className="w-40 h-40 mx-auto mb-6 mix-blend-multiply" />
+              <h3 className="font-black text-xl tracking-tighter">Sync Family</h3>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-8">Mum scans to join live uplink</p>
+              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(config)); alert("Config Copied!"); }} className="w-full flex items-center justify-center gap-2 p-5 bg-gray-50 rounded-2xl font-bold text-xs"><Copy size={16} /> Copy Setup Payload</button>
+              <button onClick={() => { localStorage.removeItem('rosie_config'); window.location.reload(); }} className="mt-6 text-red-500 font-black text-[10px] uppercase tracking-widest block mx-auto underline">Reset System</button>
             </div>
           </div>
         )}
       </main>
 
-      <footer className="p-6 bg-white/80 backdrop-blur-xl border-t border-gray-100 z-40">
+      <footer className="p-6 bg-white border-t border-gray-100 pb-10 z-40">
         {activeTab === 'brain' && (
           <div className="mb-6 flex gap-2">
-            <input value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiChat()} placeholder="Ask Rosie anything..." className="flex-1 p-4 bg-gray-100 rounded-full text-sm outline-none" />
-            <button onClick={handleAiChat} className="p-4 bg-[#EA4335] text-white rounded-full shadow-lg"><Send size={20} /></button>
+            <input value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiChat()} placeholder="Chat with Rosie..." className="flex-1 p-4 bg-gray-100 rounded-full text-sm outline-none shadow-inner" />
+            <button onClick={handleAiChat} className="p-4 bg-[#EA4335] text-white rounded-full shadow-lg active:scale-90"><Send size={20} /></button>
           </div>
         )}
         <nav className="flex justify-around items-center">
-          <button onClick={() => setActiveTab('brain')} className={`transition-all ${activeTab === 'brain' ? "text-[#EA4335] scale-125" : "text-gray-300"}`}><Mic size={28} strokeWidth={2.5} /></button>
-          <button onClick={() => setActiveTab('hub')} className={`transition-all ${activeTab === 'hub' ? "text-[#EA4335] scale-125" : "text-gray-300"}`}><ShoppingCart size={28} strokeWidth={2.5} /></button>
-          <button onClick={() => setActiveTab('plans')} className={`transition-all ${activeTab === 'plans' ? "text-[#EA4335] scale-125" : "text-gray-300"}`}><Calendar size={28} strokeWidth={2.5} /></button>
-          <button onClick={() => setActiveTab('notebook')} className={`transition-all ${activeTab === 'notebook' ? "text-[#EA4335] scale-125" : "text-gray-300"}`}><Book size={28} strokeWidth={2.5} /></button>
+          <button onClick={() => setActiveTab('brain')} className={`transition-all ${activeTab === 'brain' ? "text-[#EA4335] scale-125 shadow-sm" : "text-gray-200"}`}><Mic size={32} strokeWidth={2.5} /></button>
+          <button onClick={() => setActiveTab('hub')} className={`transition-all ${activeTab === 'hub' ? "text-[#EA4335] scale-125" : "text-gray-200"}`}><ShoppingCart size={32} strokeWidth={2.5} /></button>
+          <button onClick={() => setActiveTab('plans')} className={`transition-all ${activeTab === 'plans' ? "text-[#EA4335] scale-125" : "text-gray-200"}`}><Calendar size={32} strokeWidth={2.5} /></button>
+          <button onClick={() => setActiveTab('notebook')} className={`transition-all ${activeTab === 'notebook' ? "text-[#EA4335] scale-125" : "text-gray-200"}`}><Book size={32} strokeWidth={2.5} /></button>
         </nav>
       </footer>
     </div>
