@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Plus, Trash2, Radio, Send, ShoppingCart, Calendar, Mic, Copy, Heart, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Radio, Send, ShoppingCart, Calendar, Mic, Sparkles, Heart, Camera } from 'lucide-react';
 
 const COLLECTION_PATH = "artifacts";
 const DOC_ID = "rosie-family-pa-v2026";
@@ -105,16 +105,23 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto bg-[#FFF8F0] h-[100dvh] flex flex-col font-sans text-[#202124] overflow-hidden">
-      <header className="p-6 pb-2 flex justify-between items-start bg-white/60 backdrop-blur-lg sticky top-0 z-20 border-b border-white">
+      <header className="p-6 pb-4 flex justify-between items-start bg-white/60 backdrop-blur-lg sticky top-0 z-20 border-b border-white">
         <div className="flex gap-3">
-          <div className="w-12 h-12 bg-[#EA4335] rounded-2xl flex items-center justify-center text-white shadow-lg shadow-[#EA4335]/20">
-             <Heart size={24} fill="currentColor" />
+          <div className="w-14 h-14 bg-[#EA4335] rounded-3xl flex items-center justify-center text-white shadow-lg shadow-[#EA4335]/20 overflow-hidden border-2 border-white">
+             {/* ROSIE MASCOT PLACEHOLDER */}
+             <Sparkles size={32} />
           </div>
           <div>
             <h1 className="text-2xl font-black tracking-tight italic">ROSIE.</h1>
-            <div className="flex items-center gap-2">
-              <span className="flex h-2 w-2 rounded-full bg-[#EA4335] animate-pulse"></span>
-              <span className="text-[10px] font-black text-[#EA4335] tracking-[0.2em] uppercase">Happy Family PA</span>
+            <div className="flex -space-x-2 mt-1">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="w-6 h-6 rounded-full border-2 border-white bg-gray-200 flex items-center justify-center overflow-hidden">
+                    <span className="text-[8px] font-bold text-gray-400">{i}</span>
+                  </div>
+                ))}
+                <div className="w-6 h-6 rounded-full border-2 border-white bg-[#EA4335] flex items-center justify-center text-white">
+                  <Plus size={10} strokeWidth={4} />
+                </div>
             </div>
           </div>
         </div>
@@ -137,10 +144,7 @@ export default function App() {
                 <p className="text-[15px] leading-relaxed font-medium whitespace-pre-wrap">{m.text}</p>
                 <div className="flex items-center justify-between mt-3 opacity-40">
                   <span className="text-[9px] font-bold uppercase">{m.ts}</span>
-                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => navigator.clipboard.writeText(m.text)} className="p-1 hover:text-black"><Copy size={12}/></button>
-                    <button onClick={() => handleSync('messages', m, 'remove')} className="p-1 hover:text-[#EA4335]"><Trash2 size={12}/></button>
-                  </div>
+                  <button onClick={() => handleSync('messages', m, 'remove')} className="p-1 hover:text-[#EA4335] opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
                 </div>
               </div>
             ))}
@@ -195,6 +199,34 @@ export default function App() {
             </div>
           </section>
         )}
+
+        {activeTab === 'memories' && (
+          <section className="space-y-4">
+            <h2 className="text-xs font-black uppercase tracking-widest text-gray-400 flex items-center gap-2 mb-6">
+              <Camera size={16} /> Family Memories
+            </h2>
+            <div className="grid grid-cols-2 gap-4">
+              {data.memories?.map((memory, i) => (
+                <div key={i} className="aspect-square bg-white rounded-[2rem] p-4 flex flex-col justify-between shadow-sm border border-gray-50 relative group">
+                  <div className="w-8 h-8 bg-[#EA4335]/10 text-[#EA4335] rounded-full flex items-center justify-center">
+                    <Heart size={14} fill="currentColor" />
+                  </div>
+                  <p className="text-[13px] font-bold leading-tight">{memory}</p>
+                  <button onClick={() => handleSync('memories', memory, 'remove')} className="absolute top-2 right-2 p-2 text-gray-200 opacity-0 group-hover:opacity-100 transition-opacity hover:text-[#EA4335]">
+                    <Trash2 size={16}/>
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-4">
+               <input id="memory-input" className="flex-1 p-4 rounded-2xl bg-white shadow-sm border-0 font-bold placeholder:text-gray-200" placeholder="Capture a milestone..." />
+               <button onClick={() => {
+                 const el = document.getElementById('memory-input');
+                 if(el.value.trim()){ handleSync('memories', el.value.trim()); el.value = ''; }
+               }} className="p-4 bg-[#EA4335] text-white rounded-2xl shadow-lg active:scale-90 transition-all"><Plus size={24} strokeWidth={3}/></button>
+            </div>
+          </section>
+        )}
       </main>
 
       {activeTab === 'brain' && (
@@ -206,13 +238,9 @@ export default function App() {
               onKeyDown={(e) => e.key === 'Enter' && executeAiQuery()}
               placeholder="Ask Rosie anything..."
               disabled={isGenerating}
-              className="flex-1 p-5 bg-gray-50 rounded-[2rem] border-0 text-[15px] font-bold focus:ring-2 focus:ring-[#EA4335] pr-14 disabled:opacity-50"
+              className="flex-1 p-5 bg-gray-50 rounded-[2rem] border-0 text-[15px] font-bold focus:ring-2 focus:ring-[#EA4335] pr-14"
             />
-             <button 
-              onClick={executeAiQuery}
-              disabled={isGenerating || !inputText.trim()}
-              className={`absolute right-2 top-1/2 -translate-y-1/2 p-3 rounded-full transition-all ${inputText.trim() && !isGenerating ? 'bg-[#EA4335] text-white shadow-lg active:scale-90' : 'bg-gray-100 text-gray-300'}`}
-            >
+             <button onClick={executeAiQuery} disabled={isGenerating || !inputText.trim()} className={`absolute right-2 top-1/2 -translate-y-1/2 p-3 rounded-full ${inputText.trim() ? 'bg-[#EA4335] text-white shadow-lg' : 'bg-gray-100 text-gray-300'}`}>
               <Send size={20} strokeWidth={3}/>
             </button>
           </div>
@@ -224,11 +252,12 @@ export default function App() {
           {[
             { id: 'brain', icon: Mic },
             { id: 'hub', icon: ShoppingCart },
-            { id: 'plans', icon: Calendar }
+            { id: 'plans', icon: Calendar },
+            { id: 'memories', icon: Camera }
           ].map(({ id, icon: Icon }) => (
             <button key={id} onClick={() => setActiveTab(id)} className={`p-4 transition-all relative ${activeTab === id ? "text-[#EA4335] scale-110" : "text-gray-200 hover:text-gray-400"}`}>
-              <Icon size={28} strokeWidth={activeTab === id ? 3 : 2} />
-              {activeTab === id && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#EA4335] rounded-full" />}
+              <Icon size={24} strokeWidth={activeTab === id ? 3 : 2} />
+              {activeTab === id && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#EA4335] rounded-full" />}
             </button>
           ))}
         </div>
