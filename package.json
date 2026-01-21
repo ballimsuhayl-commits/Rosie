@@ -3,7 +3,16 @@
   "version": "1.1.0",
   "private": true,
   "engines": {
-    "node": "18.x"
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.1.1",
+    "firebase": "^10.7.2",
+    "lucide-react": "^0.309.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -11,19 +20,22 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
-  "dependencies": {
-    "@google/generative-ai": "^0.21.0",
-    "firebase": "^10.7.1",
-    "lucide-react": "^0.309.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1"
-  },
-  "devDependencies": {
-    "@babel/plugin-transform-private-property-in-object": "^7.23.3"
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
   },
   "browserslist": {
-    "production": [">0.2%", "not dead", "op_mini all"],
-    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+    "production": [
+      ">0.2%",
+      "not dead",
+      "op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }
