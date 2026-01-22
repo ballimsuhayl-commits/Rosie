@@ -7,7 +7,7 @@ import {
   Plus, Trash2, Send, Mic, Sparkles, Heart, Book, ArrowLeft, MessageCircle, 
   Grid, Radio, Moon, Sun, MapPin, Home, ShoppingCart, 
   CheckCircle, Search, Star, Zap, Utensils, ShieldAlert, Volume2, 
-  Calendar, Camera, Scan, Clock, UserCheck, Eye, HandHeart, Map as MapUI, X
+  Calendar, Camera, Scan, Clock, UserCheck, Eye, HeartHandshake, Map as MapUI, X
 } from 'lucide-react';
 
 // --- PRODUCTION CONFIG (DURBAN NORTH CLOUD) ---
@@ -83,9 +83,8 @@ export default function App() {
         BOSS: Nasima (The Boss). DAD: Suhayl. RELIGION: ${familyData.userSettings.religion}.
         STORES: Woolworths, Checkers Virginia Circle, PnP Hyper, Food Lovers, Spar. 
         CURRENCY: ZAR (R).
-        TASKS: "Tell [Name] to [Task]" -> Update memberTasks.
-        MEALS: Plan weekly recipes and add to shopping list.
-        TONE: Simplified, efficient, proactive.`
+        TASKS: Log 'Tell [Name] to [Task]' specifically for Lisa, Jabu, Suhayl, Zaara, or Rayhaan.
+        MEALS: Plan weekly recipes and add to shopping list. Durban North specifics only.`
       });
       const res = await model.generateContent(`System Data: ${JSON.stringify(familyData)}. Request: ${msg}`);
       const reply = res.response.text();
@@ -165,8 +164,8 @@ export default function App() {
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-black italic tracking-tighter text-red-500">ROSIE</h1>
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-50 border">
-            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`} />
-            <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Durban North</span>
+            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 shadow-lg' : 'bg-red-500 animate-pulse'}`} />
+            <span className="text-[10px] font-black uppercase text-gray-400">Durban North PA</span>
           </div>
         </div>
         <div className="flex bg-gray-100 p-1.5 rounded-2xl gap-1">
@@ -182,14 +181,14 @@ export default function App() {
             <RosieMascot />
             
             <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* FIXED: Pray icon replaced with HandHeart */}
+              {/* FIXED: HeartHandshake replaces missing HandHeart */}
               <div className="bg-white rounded-[45px] p-8 border-2 border-red-50 text-center shadow-sm">
-                <HandHeart className="mx-auto text-red-100 mb-2" size={32} />
+                <HeartHandshake className="mx-auto text-red-100 mb-2" size={32} />
                 <h3 className="text-lg font-black italic text-gray-800">{familyData.dailyMessage || "Nasima, may your day be effortless."}</h3>
               </div>
               <div className="bg-gradient-to-br from-orange-400 to-red-500 rounded-[45px] p-8 text-white shadow-xl relative overflow-hidden">
                 <h3 className="text-2xl font-black italic mb-2 tracking-tighter">Kitchen Brain</h3>
-                <p className="text-[10px] font-black opacity-70 uppercase tracking-widest mb-4">Meal Plan & Durban Specials</p>
+                <p className="text-[10px] font-black opacity-70 uppercase tracking-widest mb-4">Meal Plan & Durban North Specials</p>
                 <div className="flex gap-2">
                   <div className="bg-white/20 p-3 rounded-2xl"><Utensils size={20}/></div>
                   <div className="bg-white/20 p-3 rounded-2xl" onClick={toggleLens}><Eye size={20}/></div>
@@ -250,7 +249,7 @@ export default function App() {
             {id:'plans', icon:Calendar, label: 'Plan'}, {id:'memories', icon:Camera, label: 'Pics'}, {id:'diaries', icon:Book, label: 'Log'} 
           ].map(({id, icon:Icon, label}) => (
             <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-col items-center justify-center w-full py-4 rounded-[40px] transition-all duration-500 ${activeTab === id ? 'bg-red-50 -translate-y-6 shadow-2xl' : 'active:scale-90'}`}>
-              <Icon size={22} className={activeTab === id ? 'text-red-500' : 'text-gray-300'} strokeWidth={3} />
+              <Icon size={22} className={activeTab === id ? 'text-red-500' : 'text-gray-400'} strokeWidth={3} />
               <span className={`text-[8px] font-black uppercase mt-1.5 tracking-tighter ${activeTab === id ? 'text-red-500' : 'text-gray-400'}`}>{label}</span>
             </button>
           ))}
