@@ -19,14 +19,15 @@ const safeGetEnv = (key) => {
     return undefined;
 };
 
+// YOUR CUSTOM FIREBASE CONFIGURATION
 const FIREBASE_CONFIG = {
-  apiKey: safeGetEnv('NEXT_PUBLIC_FIREBASE_API_KEY') || "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
-  authDomain: safeGetEnv('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN') || "rosie-pa.firebaseapp.com",
-  projectId: safeGetEnv('NEXT_PUBLIC_FIREBASE_PROJECT_ID') || "rosie-pa",
-  storageBucket: safeGetEnv('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET') || "rosie-pa.firebasestorage.app",
-  messagingSenderId: safeGetEnv('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID') || "767772651557",
-  appId: safeGetEnv('NEXT_PUBLIC_FIREBASE_APP_ID') || "1:767772651557:web:239816f833c5af7c20cfcc",
-  measurementId: safeGetEnv('NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID') || "G-SQCQ424EYE"
+  apiKey: "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
+  authDomain: "rosie-pa.firebaseapp.com",
+  projectId: "rosie-pa",
+  storageBucket: "rosie-pa.firebasestorage.app",
+  messagingSenderId: "767772651557",
+  appId: "1:767772651557:web:239816f833c5af7c20cfcc",
+  measurementId: "G-SQCQ424EYE"
 };
 
 const GEMINI_KEY = safeGetEnv('NEXT_PUBLIC_GEMINI_API_KEY');
@@ -83,10 +84,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const { auth, db } = getServices();
+    const { auth } = getServices();
     signInAnonymously(auth).then(() => {
         auth.onAuthStateChanged((u) => setUser(u));
-    });
+    }).catch(err => console.error("Auth error:", err));
   }, [getServices]);
 
   useEffect(() => {
@@ -96,7 +97,7 @@ export default function App() {
         unsubData = onSnapshot(doc(db, "artifacts", APP_ID, "public", "data"), (s) => {
             if (s.exists()) setData(s.data());
             else setDoc(doc(db, "artifacts", APP_ID, "public", "data"), { messages: [], groceries: [], plans: [], memories: [], diary_books: ['Journal'], diary_entries: [], price_estimates: {} });
-        });
+        }, (err) => console.error("Firestore error:", err));
     }
     return () => unsubData();
   }, [getServices, user]);
@@ -142,13 +143,13 @@ export default function App() {
     setIsGenerating(true); setRosieState('thinking');
     try {
       const genAI = new GoogleGenerativeAI(config.gemini);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: "Rosie PA. Alexa-style. Navigation: return JSON {'type':'navigation','destination':'...','steps':[]}." });
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: "Rosie PA. Alexa-style always-listening assistant. Navigation: return JSON {'type':'navigation','destination':'...','steps':[]}." });
       const res = await model.generateContent(text);
       const reply = res.response.text();
       if (reply.includes('"type": "navigation"')) {
           const nav = JSON.parse(reply.match(/\{[\s\S]*\}/)[0]);
           setNavData({ ...nav, mapsUrl: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(nav.destination)}` });
-          handleSpeak(`Navigating to ${nav.destination}.`);
+          handleSpeak(`Setting off for ${nav.destination}.`);
       } else {
           await sync('messages', { role: 'rosie', text: reply, ts: new Date().toLocaleTimeString() });
           handleSpeak(reply);
@@ -211,11 +212,11 @@ export default function App() {
             </div>
         )}
 
-        <main className="flex-1 overflow-y-auto px-7 pt-4 pb-48 scrollbar-hide z-10">
+        <main ref={scrollRef} className="flex-1 overflow-y-auto px-7 pt-4 pb-48 scrollbar-hide z-10">
           {navData && (
               <div className="bg-white rounded-[32px] p-6 shadow-xl border-b-[8px] border-[#EA4335] mb-6">
                   <h3 className="font-black text-lg text-[#2D2D2D] mb-4">{navData.destination}</h3>
-                  <button onClick={() => window.open(navData.mapsUrl, '_blank')} className="w-full py-4 bg-blue-500 text-white rounded-2xl font-black shadow-lg">OPEN LIVE MAPS</button>
+                  <button onClick={() => window.open(navData.mapsUrl, '_blank')} className="w-full py-4 bg-blue-500 text-white rounded-2xl font-black shadow-lg uppercase">Launch Google Maps</button>
               </div>
           )}
           <div className="flex flex-col items-center justify-center py-10">
