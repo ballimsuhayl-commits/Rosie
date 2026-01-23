@@ -5,11 +5,11 @@ import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion, setDoc } from 'fi
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { 
   Plus, Send, Mic, MicOff, Sparkles, MessageCircle, 
-  Grid, MapPin, Radio, ArrowLeft, ChefHat, HeartHandshake, 
-  Eye, EyeOff, ShieldCheck, Lightbulb, Search, Volume2
+  Grid, MapPin, Radio as RadioIcon, ArrowLeft, ChefHat, 
+  ShieldCheck, Lightbulb, Search, Volume2, Navigation, Zap
 } from 'lucide-react';
 
-// --- CONFIG ---
+// --- INFRA ---
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
   authDomain: "rosie-pa.firebaseapp.com",
@@ -30,68 +30,72 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [mascotMood, setMascotMood] = useState('NORMAL');
+  const [radioActive, setRadioActive] = useState(false);
   const [familyData, setFamilyData] = useState({ chatHistory: [], shopping: [] });
   const [inputText, setInputText] = useState('');
   
   const recognitionRef = useRef(null);
   const synthRef = window.speechSynthesis;
 
-  // --- 1. THE CONVERSATIONAL BRAIN ---
-  const handleSend = useCallback(async (text) => {
-    if (!text && !inputText) return;
-    const msg = text || inputText;
+  // --- 1. VOICE BRAIN (NAV & RESEARCH) ---
+  const handleAction = useCallback(async (transcript) => {
+    const msg = transcript.toLowerCase();
     
-    setInputText('');
+    // NAVIGATION TRIGGER
+    if (msg.includes("navigate to") || msg.includes("directions to")) {
+      const dest = msg.split(/navigate to|directions to/)[1].trim();
+      speak(`Sure thing! Starting navigation to ${dest}.`);
+      window.open(`https://developers.google.com/maps/documentation/cross-platform/navigation0{encodeURIComponent(dest)}&dir_action=navigate`, '_blank');
+      return;
+    }
+
+    // RADIO / RESEARCH TRIGGER
     setIsThinking(true);
-    setMascotMood('THINKING');
-    synthRef.cancel(); // Stop talking to listen
+    if (msg.includes("research") || msg.includes("read out loud")) {
+      setRadioActive(true);
+    }
 
     try {
       const model = genAI.getGenerativeModel({ 
         model: "gemini-1.5-flash",
-        systemInstruction: `You are Rosie, the Durban North Family Companion. 
-        TONE: Playful, ultra-fast, and helpful. 
-        STYLE: Use short sentences for voice. 
-        RADIO MODE: If asked to research or read, compile a clear, interesting report.
-        WAKE WORD: Your name is Rosie.`
+        systemInstruction: `You are Rosie. 
+        1. SPEED: Be as fast as ChatGPT Voice. 
+        2. RESEARCH: If asked to research/compile, give a detailed, engaging report like a radio host. 
+        3. NAVIGATION: If the user wants to go somewhere, acknowledge it warmly.
+        4. WAKE WORD: Your name is Rosie.`
       });
 
-      const res = await model.generateContent(`Context: ${JSON.stringify(familyData)}. Prompt: ${msg}`);
+      const res = await model.generateContent(`Context: ${JSON.stringify(familyData)}. Prompt: ${transcript}`);
       const reply = res.response.text();
 
-      // Update Firebase
       updateDoc(doc(db, "families", "main_family"), {
-        chatHistory: arrayUnion({ role: 'user', text: msg }, { role: 'model', text: reply })
+        chatHistory: arrayUnion({ role: 'user', text: transcript }, { role: 'model', text: reply })
       });
 
-      setMascotMood('IDEA');
       setIsThinking(false);
       speak(reply);
-
     } catch (e) {
-      setMascotMood('NORMAL');
       setIsThinking(false);
+      speak("Sorry, my brain hit a snag. Try again?");
     }
-  }, [inputText, familyData]); // eslint-disable-line
+  }, [familyData]); // eslint-disable-line
 
-  // --- 2. HIGH-SPEED SPEECH ENGINE ---
+  // --- 2. THE SPEECH ENGINE ---
   const speak = (text) => {
+    synthRef.cancel();
     setIsSpeaking(true);
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1; // Slightly faster for natural feel
-    utterance.pitch = 1.2; // Playful Rosie tone
-    
+    utterance.rate = 1.15; // Fast and fluid
+    utterance.pitch = 1.2;
     utterance.onend = () => {
       setIsSpeaking(false);
-      setMascotMood('NORMAL');
-      if (!isMicLocked) startWakeWordListener(); // Go back to listening
+      setRadioActive(false);
+      if (!isMicLocked) startWakeWordListener();
     };
-
     synthRef.speak(utterance);
   };
 
-  // --- 3. WAKE WORD LISTENER (ROSIE...) ---
+  // --- 3. WAKE-WORD LISTENER ---
   const startWakeWordListener = useCallback(() => {
     if (isMicLocked || isSpeaking || !('webkitSpeechRecognition' in window)) return;
     
@@ -101,20 +105,19 @@ export default function App() {
     recognition.lang = 'en-ZA';
 
     recognition.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
+      const result = event.results[event.results.length - 1];
+      const transcript = result[0].transcript.toLowerCase();
       
-      // Check for Wake Word or "Research" command
       if (transcript.includes("rosie")) {
         recognition.stop();
-        setMascotMood('LISTENING');
         setIsListening(true);
-        // Direct trigger after wake word
-        const command = transcript.split("rosie")[1];
-        if (command && command.length > 3) {
-          handleSend(command);
+        // Extract the part after "Rosie"
+        const cleanCommand = transcript.split("rosie")[1]?.trim();
+        if (cleanCommand) {
+          handleAction(cleanCommand);
         } else {
-          // Just heard name, wait for full command
-          setTimeout(() => startWakeWordListener(), 1000);
+          // Heard only name, beep or wait for command
+          speak("I'm here! What do you need?");
         }
       }
     };
@@ -126,7 +129,7 @@ export default function App() {
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [isMicLocked, isSpeaking, handleSend]);
+  }, [isMicLocked, isSpeaking, handleAction]);
 
   useEffect(() => {
     signInAnonymously(auth).then(() => {
@@ -138,100 +141,114 @@ export default function App() {
     return () => synthRef.cancel();
   }, [startWakeWordListener]); // eslint-disable-line
 
-  // --- 4. PRECISION MASCOT ---
+  // --- 4. THE MASCOT (RADIO ENHANCED) ---
   const RosieMascot = () => (
-    <div className="relative w-72 h-72 flex justify-center items-center cursor-pointer" onClick={() => handleSend("Rosie, tell me a news update")}>
-      {/* Radio Wave Background (only when speaking/radio mode) */}
-      {isSpeaking && (
+    <div className="relative w-80 h-80 flex justify-center items-center">
+      {/* Dynamic Signal Waves */}
+      {(isSpeaking || radioActive) && (
         <svg className="absolute inset-0 w-full h-full" viewBox="0 0 200 200">
-          <circle className="radio-wave" cx="100" cy="100" r="40" />
-          <circle className="radio-wave" cx="100" cy="100" r="40" />
-          <circle className="radio-wave" cx="100" cy="100" r="40" />
+          <circle className="signal-wave" cx="100" cy="100" r="45" />
+          <circle className="signal-wave" cx="100" cy="100" r="45" />
+          <circle className="signal-wave" cx="100" cy="100" r="45" />
         </svg>
       )}
 
-      <svg viewBox="0 0 200 200" className={`w-full h-full animate-float transition-all duration-500`}>
+      <svg viewBox="0 0 200 200" className={`w-full h-full animate-rosie-idle transition-all duration-700`}>
+        {/* The Flower/Blob Body */}
         <path fill="#FF7F50" d="M100,20 C120,20 130,40 150,45 C170,50 185,70 180,95 C175,120 185,145 165,160 C145,175 125,165 100,180 C75,165 55,175 35,160 C15,145 25,120 20,95 C15,70 30,50 50,45 C70,40 80,20 100,20 Z" />
+        {/* Reactive Eyes */}
         <g transform="translate(75, 80)">
-           <circle fill="white" cx="0" cy="0" r="13" />
-           <circle fill="black" cx={isThinking ? "4" : "0"} cy="0" r="6" />
-           <circle fill="white" cx="50" cy="0" r="13" />
-           <circle fill="black" cx={isThinking ? "46" : "50"} cy="0" r="6" />
+           <circle fill="white" cx="0" cy="0" r="14" />
+           <circle fill="black" cx={isThinking ? "5" : "0"} cy="0" r="7" />
+           <circle fill="white" cx="50" cy="0" r="14" />
+           <circle fill="black" cx={isThinking ? "45" : "50"} cy="0" r="7" />
         </g>
+        {/* Animated Mouth */}
         <path 
           d="M85,115 Q100,130 115,115" 
           fill="none" 
           stroke="black" 
-          strokeWidth="3" 
+          strokeWidth="4" 
           strokeLinecap="round" 
-          className={isSpeaking ? "animate-talk" : ""}
+          className={isSpeaking ? "mouth-talking" : ""}
         />
       </svg>
-      
-      {isThinking && <div className="absolute top-0 right-0 p-4 bg-white rounded-full shadow-lg animate-bounce"><Sparkles className="text-orange-500"/></div>}
-      {mascotMood === 'IDEA' && <div className="absolute -top-10"><Lightbulb size={60} className="text-yellow-400 animate-pulse" fill="currentColor"/></div>}
+
+      {isThinking && <Sparkles className="absolute top-0 right-10 text-orange-400 animate-spin" size={48} />}
+      {radioActive && <div className="absolute -top-6 bg-red-500 text-white px-4 py-1 rounded-full text-[10px] font-black animate-bounce">RADIO LIVE</div>}
     </div>
   );
 
   return (
-    <div className={`min-h-screen ${isMicLocked ? 'bg-zinc-100' : 'bg-[#FFF8F0]'} flex flex-col transition-colors duration-1000`}>
-      {/* PRIVACY BAR */}
-      <div className="bg-zinc-900 px-6 py-2 flex justify-between items-center z-[60]">
-         <button onClick={() => setIsMicLocked(!isMicLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isMicLocked ? 'text-red-500' : 'text-green-500'}`}>
-            {isMicLocked ? <MicOff size={14}/> : <Mic size={14}/>} {isMicLocked ? 'Privacy Mode' : 'Wake Word: Rosie'}
+    <div className={`min-h-screen ${isMicLocked ? 'bg-zinc-200' : 'bg-[#FFF8F0]'} flex flex-col transition-all duration-1000`}>
+      {/* TOP SECURITY BAR */}
+      <div className="bg-zinc-900 px-6 py-3 flex justify-between items-center z-[60] shadow-xl">
+         <button onClick={() => setIsMicLocked(!isMicLocked)} className={`flex items-center gap-3 text-[11px] font-black uppercase tracking-tighter ${isMicLocked ? 'text-red-500' : 'text-green-500'}`}>
+            {isMicLocked ? <MicOff size={16}/> : <Mic size={16}/>} {isMicLocked ? 'Privacy Locked' : 'Active: "Rosie"'}
          </button>
-         <ShieldCheck size={14} className="text-blue-500"/>
+         <div className="flex items-center gap-2">
+            {isSpeaking && <div className="w-2 h-2 bg-green-500 rounded-full animate-ping"/>}
+            <ShieldCheck size={18} className="text-blue-500"/>
+         </div>
       </div>
 
-      <main className="flex-1 flex flex-col items-center px-6 py-10 overflow-y-auto">
+      <main className="flex-1 flex flex-col items-center px-6 py-6 overflow-y-auto">
         {activeTab === 'hub' && (
           <div className="max-w-md w-full flex flex-col items-center gap-8">
             <RosieMascot />
             
-            <div className="text-center space-y-2">
-              <h1 className="text-4xl font-black text-gray-800">ROSIE RADIO</h1>
-              <p className="text-xs font-bold text-orange-400 uppercase tracking-widest">Say "Rosie, research [topic]"</p>
+            <div className="text-center space-y-1">
+              <h1 className="text-5xl font-black text-gray-800 tracking-tighter italic">ROSIE PRO</h1>
+              <p className="text-xs font-black text-orange-500 uppercase tracking-widest">Conversational AI Engine</p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 w-full">
-              <button onClick={() => handleSend("Rosie, give me the daily briefing")} className="bg-white border-4 border-orange-200 p-6 rounded-[40px] shadow-xl flex items-center justify-between group active:scale-95 transition-all">
-                <div className="flex items-center gap-4">
-                  <div className="bg-orange-100 p-4 rounded-3xl text-orange-600"><Radio size={24}/></div>
+              {/* RESEARCH BUTTON */}
+              <button onClick={() => handleAction("Rosie, research and read out loud the news update")} className="bg-white border-b-8 border-orange-200 p-8 rounded-[45px] shadow-2xl flex items-center justify-between group active:translate-y-2 active:border-b-0 transition-all">
+                <div className="flex items-center gap-5">
+                  <div className="bg-orange-100 p-5 rounded-3xl text-orange-600 group-hover:rotate-12 transition-transform"><RadioIcon size={28}/></div>
                   <div className="text-left">
-                    <h3 className="font-black italic">Morning Briefing</h3>
-                    <p className="text-[10px] font-bold text-gray-400">RESEARCH & READ</p>
+                    <h3 className="text-xl font-black italic text-gray-800">Rosie Radio</h3>
+                    <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Topic Researcher</p>
                   </div>
                 </div>
-                <Volume2 className="text-orange-300" />
+                <Search className="text-orange-200" size={24} />
               </button>
 
-              <button onClick={() => setActiveTab('brain')} className="bg-white border-4 border-blue-100 p-6 rounded-[40px] shadow-xl flex items-center justify-between group active:scale-95 transition-all">
-                <div className="flex items-center gap-4">
-                  <div className="bg-blue-100 p-4 rounded-3xl text-blue-600"><MessageCircle size={24}/></div>
+              {/* NAV BUTTON */}
+              <button onClick={() => handleAction("Rosie, navigate to Umhlanga Rocks")} className="bg-white border-b-8 border-blue-200 p-8 rounded-[45px] shadow-2xl flex items-center justify-between group active:translate-y-2 active:border-b-0 transition-all">
+                <div className="flex items-center gap-5">
+                  <div className="bg-blue-100 p-5 rounded-3xl text-blue-600 group-hover:-rotate-12 transition-transform"><MapPin size={28}/></div>
                   <div className="text-left">
-                    <h3 className="font-black italic">Chat Mode</h3>
-                    <p className="text-[10px] font-bold text-gray-400">INSTANT RESPONSES</p>
+                    <h3 className="text-xl font-black italic text-gray-800">Voice Navigation</h3>
+                    <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest">GPS Command Center</p>
                   </div>
                 </div>
-                <Zap className="text-blue-300" />
+                <Navigation className="text-blue-200" size={24} />
               </button>
             </div>
           </div>
         )}
 
+        {/* CHAT TAB (ChatGPT Style) */}
         {activeTab === 'brain' && (
-          <div className="w-full max-w-2xl h-full flex flex-col">
-            <button onClick={() => setActiveTab('hub')} className="mb-4 text-orange-500 font-black flex items-center gap-2"><ArrowLeft/> Back</button>
-            <div className="flex-1 overflow-y-auto space-y-4 pb-24">
-              {familyData.chatHistory?.slice(-10).map((m, i) => (
+          <div className="w-full max-w-2xl h-full flex flex-col bg-white rounded-[50px] p-6 shadow-2xl border-4 border-orange-50">
+            <header className="flex justify-between items-center mb-6">
+                <button onClick={() => setActiveTab('hub')} className="text-orange-500 font-black flex items-center gap-2 uppercase text-xs tracking-widest"><ArrowLeft size={16}/> Home</button>
+                <div className="bg-orange-100 px-4 py-1 rounded-full text-[10px] font-black text-orange-600 uppercase tracking-widest">Chat Brain</div>
+            </header>
+            <div className="flex-1 overflow-y-auto space-y-6 pb-24 px-2 scroll-smooth">
+              {familyData.chatHistory?.slice(-12).map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] p-4 rounded-[30px] font-bold text-sm ${m.role === 'user' ? 'bg-orange-500 text-white' : 'bg-white border'}`}>{m.text}</div>
+                  <div className={`max-w-[85%] p-5 rounded-[35px] font-bold text-sm leading-relaxed shadow-sm ${m.role === 'user' ? 'bg-orange-500 text-white rounded-tr-none' : 'bg-gray-50 border text-gray-700 rounded-tl-none'}`}>{m.text}</div>
                 </div>
               ))}
+              {isThinking && <div className="flex justify-start"><div className="bg-gray-100 p-4 rounded-full animate-pulse text-[10px] font-black text-gray-400 uppercase tracking-widest">Rosie is thinking...</div></div>}
             </div>
-            <div className="fixed bottom-32 left-6 right-6 flex items-center gap-2 bg-white p-2 rounded-full shadow-2xl border">
-              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} className="flex-1 px-6 outline-none font-bold" placeholder="Type or say 'Rosie'..." />
-              <button onClick={() => handleSend()} className="bg-orange-500 text-white p-4 rounded-full"><Send size={20}/></button>
+            {/* INPUT FIXED BAR */}
+            <div className="absolute bottom-36 left-12 right-12 flex items-center gap-3 bg-white p-3 rounded-full shadow-[0_15px_40px_rgba(0,0,0,0.1)] border-2 border-orange-50">
+              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleAction(inputText)} className="flex-1 px-6 outline-none font-bold text-gray-800" placeholder="Type or say 'Rosie'..." />
+              <button onClick={() => handleAction(inputText)} className="bg-orange-500 text-white p-4 rounded-full hover:scale-105 transition-transform"><Send size={20}/></button>
             </div>
           </div>
         )}
@@ -239,14 +256,14 @@ export default function App() {
 
       {/* FOOTER NAV */}
       <nav className="fixed bottom-0 w-full p-6 z-50 flex justify-center">
-        <div className="bg-white/95 backdrop-blur-xl border border-white/50 rounded-[55px] shadow-2xl p-2 flex justify-between items-center w-full max-w-sm">
+        <div className="bg-white/95 backdrop-blur-3xl border border-white/50 rounded-[60px] shadow-[0_15px_60px_rgba(0,0,0,0.2)] p-2 flex justify-between items-center w-full max-w-sm">
           {[ 
-            {id:'brain', icon:MessageCircle, label: 'CHAT'}, {id:'hub', icon:Radio, label: 'RADIO'}, 
-            {id:'map', icon:MapPin, label: 'MAP'} 
+            {id:'brain', icon:Zap, label: 'CHAT'}, {id:'hub', icon:RadioIcon, label: 'RADIO'}, 
+            {id:'map', icon:MapPin, label: 'NAV'} 
           ].map(({id, icon:Icon, label}) => (
-            <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-col items-center justify-center w-full py-3 rounded-[35px] transition-all ${activeTab === id ? 'bg-orange-50' : ''}`}>
-              <Icon size={20} className={activeTab === id ? 'text-orange-500' : 'text-gray-300'} />
-              <span className={`text-[8px] font-black mt-1 ${activeTab === id ? 'text-orange-500' : 'text-gray-300'}`}>{label}</span>
+            <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-col items-center justify-center w-full py-4 rounded-[40px] transition-all duration-300 ${activeTab === id ? 'bg-orange-500 text-white -translate-y-4 shadow-xl' : 'text-gray-300'}`}>
+              <Icon size={24} strokeWidth={2.5} />
+              <span className={`text-[9px] font-black mt-1 tracking-widest ${activeTab === id ? 'text-white' : 'text-gray-300'}`}>{label}</span>
             </button>
           ))}
         </div>
@@ -254,8 +271,3 @@ export default function App() {
     </div>
   );
 }
-
-// Custom Zap icon for UI
-const Zap = ({className}) => (
-  <svg className={className} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-);
