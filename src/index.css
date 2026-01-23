@@ -21,7 +21,7 @@ body{
   font-family: "Fredoka", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--text);
   background-color: var(--cream);
-  background-image: url("/confetti.png");
+  background-image: url("%PUBLIC_URL%/confetti.png");
   background-repeat: repeat;
   background-size: 360px 360px;
   -webkit-font-smoothing: antialiased;
