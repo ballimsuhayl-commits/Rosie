@@ -1,9 +1,15 @@
 {
-  "name": "Rosie PA — V31.2 DOWNLOAD",
-  "short_name": "Rosie V31.2",
+  "short_name": "Rosie V31.3",
+  "name": "Rosie PA – V31.3 DOWNLOAD",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#fff6eb",
-  "theme_color": "#fff6eb",
-  "description": "Rosie PA — V31.2 DOWNLOAD"
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff"
 }
