@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 
 // --- 1. CONFIGURATION ---
-// REPLACE KEYS WITH YOUR OWN IF NEEDED
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
   authDomain: "rosie-pa.firebaseapp.com",
@@ -43,37 +42,29 @@ const INITIAL_DATA = {
 };
 
 export default function App() {
-  // --- 3. STATE ---
   const [activeTab, setActiveTab] = useState('hub');
-  
-  // View Modes
-  const [kitchenMode, setKitchenMode] = useState(null); // 'SHOPPING' | 'MEALS'
+  const [kitchenMode, setKitchenMode] = useState(null); 
   const [openDiary, setOpenDiary] = useState(null); 
   const [selectedMember, setSelectedMember] = useState(null); 
   
-  // Hardware Security
   const [isMicLocked, setIsMicLocked] = useState(false);
   const [isCamLocked, setIsCamLocked] = useState(false);
   
-  // Activity
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isLensOpen, setIsLensOpen] = useState(false);
   const [micError, setMicError] = useState("");
   
-  // Data
   const [familyData, setFamilyData] = useState(INITIAL_DATA);
   const [inputText, setInputText] = useState('');
   const [newItem, setNewItem] = useState('');
   const [mascotMood, setMascotMood] = useState('NORMAL');
   
-  // Refs
   const videoRef = useRef(null);
   const recognitionRef = useRef(null);
   const longPressTimer = useRef(null);
   const clickCount = useRef(0);
 
-  // --- 4. REAL-TIME SYNC ---
   useEffect(() => {
     signInAnonymously(auth).then(() => {
       onSnapshot(doc(db, "families", "main_family"), (docSnap) => {
@@ -86,7 +77,6 @@ export default function App() {
     }).catch(e => console.error("Auth Error:", e));
   }, []);
 
-  // --- 5. AI & VOICE ENGINE ---
   const handleSend = useCallback(async (text) => {
     const msg = text || inputText;
     if (!msg) return;
@@ -96,11 +86,10 @@ export default function App() {
     setMascotMood('THINKING');
     window.speechSynthesis.cancel();
 
-    // ⚡ MAP VOICE TRAP
     if (activeTab === 'map' || msg.toLowerCase().includes("navigate to")) {
         const dest = msg.replace(/navigate to/i, '').trim();
         if(dest) {
-          const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(dest)}`;
+          const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
           window.open(url, '_blank');
           setIsThinking(false);
           setMascotMood('NORMAL');
@@ -135,12 +124,12 @@ export default function App() {
       setIsThinking(false);
       setMascotMood('NORMAL');
     }
-  }, [inputText, familyData, isMicLocked, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inputText, familyData, isMicLocked, activeTab]); 
 
   const startListening = useCallback(() => {
     if (isMicLocked) return;
     if (!('webkitSpeechRecognition' in window)) {
-        setMicError("Mic not supported");
+        setMicError("Mic not supported in this browser");
         return;
     }
     
@@ -163,21 +152,6 @@ export default function App() {
     recognition.start();
   }, [handleSend, isMicLocked]);
 
-  const toggleLens = async () => {
-    if (isCamLocked) return;
-    if (!isLensOpen) {
-      setIsLensOpen(true);
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      } catch(e) { setIsLensOpen(false); }
-    } else {
-      if (videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t => t.stop());
-      setIsLensOpen(false);
-    }
-  };
-
-  // --- 6. ACTIONS ---
   const addTask = async (member, task) => {
     if(!task) return;
     const currentTasks = familyData.memberTasks?.[member] || [];
@@ -219,8 +193,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FFF8F0] overflow-hidden">
-      
-      {/* SECURITY BAR */}
       <div className="bg-zinc-900 px-6 py-2 flex justify-between items-center z-[60]">
          <div className="flex gap-4">
             <button onClick={() => setIsMicLocked(!isMicLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isMicLocked ? 'text-red-500' : 'text-green-500'}`}>
@@ -242,14 +214,10 @@ export default function App() {
       </header>
 
       <main className="flex-1 w-full px-6 py-6 pb-48 overflow-x-hidden overflow-y-auto">
-        
-        {/* === HUB TAB === */}
         {activeTab === 'hub' && !kitchenMode && !selectedMember && !openDiary && (
           <div className="max-w-5xl mx-auto space-y-10 flex flex-col items-center">
             <RosieMascot />
-            
             <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* KITCHEN OS */}
               <button onClick={() => setKitchenMode('SHOPPING')} className="bg-gradient-to-br from-orange-400 to-red-500 rounded-[45px] p-8 text-white shadow-xl relative overflow-hidden cursor-pointer active:scale-95 transition-transform text-left w-full">
                 <ChefHat className="absolute -right-5 -bottom-5 text-white opacity-20" size={120} />
                 <h3 className="text-2xl font-black italic mb-2">Kitchen OS</h3>
@@ -259,16 +227,12 @@ export default function App() {
                    <div className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1"><Search size={10}/> Price Check</div>
                 </div>
               </button>
-
-              {/* LOGS */}
               <button onClick={() => setActiveTab('diaries')} className="bg-white rounded-[45px] p-8 border-2 border-red-50 text-center shadow-sm cursor-pointer active:scale-95 transition-transform w-full">
                 <HeartHandshake className="mx-auto text-red-500 mb-2" size={32} />
                 <h3 className="text-lg font-black italic">Log Vault</h3>
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Medical & Thoughts</p>
               </button>
             </div>
-
-            {/* FAMILY GRID (FIXED: NOW SHOWS ALL KIDS) */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
               {FAMILY_MEMBERS.map((member) => (
                 <button key={member.name} onClick={() => setSelectedMember(member)} className="bg-white rounded-[35px] p-4 shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-2 active:scale-90 transition-transform">
@@ -282,7 +246,6 @@ export default function App() {
           </div>
         )}
 
-        {/* === KITCHEN OS SUB-VIEW === */}
         {kitchenMode && (
           <div className="max-w-4xl mx-auto space-y-4">
              <button onClick={() => setKitchenMode(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase"><ArrowLeft size={16}/> Back</button>
@@ -324,7 +287,6 @@ export default function App() {
           </div>
         )}
 
-        {/* === STAFF/FAMILY TODO SUB-VIEW === */}
         {selectedMember && (
             <div className="max-w-4xl mx-auto space-y-4">
                 <button onClick={() => setSelectedMember(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase"><ArrowLeft size={16}/> Back</button>
@@ -351,7 +313,6 @@ export default function App() {
             </div>
         )}
 
-        {/* === CHAT TAB === */}
         {activeTab === 'brain' && (
           <div className="max-w-2xl mx-auto flex flex-col h-[70vh]">
             <div className="flex-1 overflow-y-auto space-y-4 pb-20 scroll-smooth">
@@ -370,7 +331,6 @@ export default function App() {
           </div>
         )}
 
-        {/* === MAP TAB (VOICE NAV) === */}
         {activeTab === 'map' && (
            <div className="max-w-5xl mx-auto h-[65vh] bg-gray-100 rounded-[50px] border-[8px] border-white shadow-2xl relative overflow-hidden flex flex-col items-center justify-center text-center p-8">
               <MapUI className="text-gray-300 absolute opacity-20" size={200} />
@@ -391,7 +351,6 @@ export default function App() {
            </div>
         )}
 
-        {/* === DIARIES/LOGS TAB === */}
         {activeTab === 'diaries' && !openDiary && (
              <div className="max-w-4xl mx-auto space-y-6">
                <h2 className="text-3xl font-black italic tracking-tighter">Secure Logs</h2>
@@ -406,7 +365,6 @@ export default function App() {
              </div>
         )}
 
-        {/* === PLANS & PICS (NO MORE DEAD TABS) === */}
         {activeTab === 'plans' && (
             <div className="flex flex-col items-center justify-center h-[50vh] text-center space-y-4">
                 <Calendar size={64} className="text-gray-200" />
@@ -440,30 +398,8 @@ export default function App() {
           </div>
         )}
       </main>
-      
-      {/* LENS OVERLAY */}
-      {isLensOpen && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center">
-          {isCamLocked ? (
-            <div className="text-center space-y-4 animate-in zoom-in duration-300">
-               <ShieldCheck size={80} className="text-red-500 mx-auto" />
-               <h2 className="text-2xl font-black text-white italic">PRIVACY LOCK ACTIVE</h2>
-               <button onClick={() => setIsLensOpen(false)} className="mt-8 bg-white/10 px-8 py-3 rounded-full text-white font-black text-xs uppercase">Close</button>
-            </div>
-          ) : (
-            <>
-              <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border-4 border-white/30 w-64 h-64 rounded-[40px] flex items-center justify-center">
-                 <Scan size={64} className="text-white/50 animate-pulse"/>
-              </div>
-              <button onClick={toggleLens} className="absolute top-10 right-6 bg-black/50 p-4 rounded-full text-white"><X size={24}/></button>
-            </>
-          )}
-        </div>
-      )}
 
-      {/* FOOTER NAV */}
-      <nav className="fixed bottom-0 w-full p-6 z-50 flex justify-center">
+      <div className="fixed bottom-0 w-full p-6 z-50 flex justify-center">
         <div className="bg-white/95 backdrop-blur-xl border border-white/50 rounded-[55px] shadow-[0_10px_40px_rgba(0,0,0,0.1)] p-2 flex justify-between items-center w-full max-w-sm">
           {[ 
             {id:'brain', icon:MessageCircle, label: 'Chat'}, {id:'hub', icon:Grid, label: 'Hub'}, {id:'map', icon:MapUI, label: 'Map'}, 
@@ -475,7 +411,7 @@ export default function App() {
             </button>
           ))}
         </div>
-      </nav>
+      </div>
     </div>
   );
 }
