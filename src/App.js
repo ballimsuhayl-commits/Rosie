@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { 
-  Plus, Trash2, Send, Mic, Sparkles, Heart, Book, ArrowLeft, MessageCircle, 
+  Plus, Trash2, Send, Mic, MicOff, Sparkles, Heart, Book, ArrowLeft, MessageCircle, 
   Grid, Radio, Moon, Sun, MapPin, Home, ShoppingCart, 
-  CheckCircle, Search, Star, Zap, Utensils, ShieldAlert, Volume2, 
-  Calendar, Camera, Scan, Clock, UserCheck, Eye, HeartHandshake, Map as MapUI, X
+  CheckCircle, Search, Star, Utensils, ShieldAlert, Volume2, 
+  Calendar, Camera, Scan, Clock, UserCheck, Eye, EyeOff, HeartHandshake, Map as MapUI, X,
+  Pill, PenLine, Flame, ChefHat, Receipt, ShieldCheck
 } from 'lucide-react';
 
-// --- PRODUCTION CONFIG (DURBAN NORTH CLOUD) ---
+// --- PRODUCTION CONFIGURATION ---
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
   authDomain: "rosie-pa.firebaseapp.com",
@@ -20,337 +21,408 @@ const FIREBASE_CONFIG = {
   appId: "1:767772651557:web:239816f833c5af7c20cfcc"
 };
 
+// --- SINGLETON INITIALIZATION ---
 const app = !getApps().length ? initializeApp(FIREBASE_CONFIG) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 const genAI = new GoogleGenerativeAI("AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo");
 
+// --- STATIC CONSTANTS (PERFORMANCE OPTIMIZATION) ---
+const FAMILY = {
+  "Nasima": { role: "Mum (The Boss)", color: "bg-rose-100 text-rose-600", shape: "40% 60% 70% 30% / 40% 50% 60% 50%", icon: "👸" },
+  "Suhayl": { role: "Dad", color: "bg-blue-100 text-blue-600", shape: "60% 40% 30% 70% / 60% 30% 70% 40%", icon: "🧔" },
+  "Lisa": { role: "Maintenance", color: "bg-orange-100 text-orange-600", shape: "30% 70% 70% 30% / 30% 30% 70% 70%", icon: "🛠️" },
+  "Jabu": { role: "Helper", color: "bg-teal-100 text-teal-600", shape: "50% 20% 50% 80% / 20% 60% 50% 70%", icon: "🧹" }
+};
+
 export default function App() {
-  // --- CORE STATE ---
+  // --- UI STATE ---
   const [mode, setMode] = useState('HOME'); 
   const [activeTab, setActiveTab] = useState('hub');
+  const [kitchenMode, setKitchenMode] = useState(null); // 'SHOPPING' or 'MEALS'
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  
+  // --- SECURITY STATE ---
+  const [isMicLocked, setIsMicLocked] = useState(false);
+  const [isCamLocked, setIsCamLocked] = useState(false);
+  
+  // --- HARDWARE STATE ---
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isLensOpen, setIsLensOpen] = useState(false);
+  
+  // --- DATA STATE ---
   const [familyData, setFamilyData] = useState({ 
     chatHistory: [], shopping: [], memberTasks: {}, diaries: [], 
     plans: [], memories: [], mealPlan: {}, userSettings: { religion: 'Islam' }, dailyMessage: "" 
   });
+  
+  // --- INPUT STATE ---
   const [inputText, setInputText] = useState('');
+  const [newItem, setNewItem] = useState('');
   const [mascotMood, setMascotMood] = useState('NORMAL');
   const [openDiary, setOpenDiary] = useState(null);
   
+  // --- REFS ---
   const videoRef = useRef(null);
-  const recognitionRef = useRef(null);
   const longPressTimer = useRef(null);
   const clickCount = useRef(0);
 
-  // --- FAMILY HIERARCHY ---
-  const FAMILY = {
-    "Nasima": { role: "Mum (The Boss) 👸", color: "bg-red-500", icon: <Heart size={18} fill="currentColor"/> },
-    "Suhayl": { role: "Dad 👨", color: "bg-blue-600", icon: <UserCheck size={18}/> },
-    "Zaara": { role: "Daughter (16) 👧", color: "bg-pink-400", icon: "📚" },
-    "Rayhaan": { role: "Son (12) 👦", color: "bg-green-500", icon: "⚽" },
-    "Lisa": { role: "Maintenance 🛠️", color: "bg-orange-600", icon: <Zap size={18}/> },
-    "Jabu": { role: "House Helper 🧹", color: "bg-teal-600", icon: "✨" }
-  };
-
-  // --- SYNC ENGINE ---
+  // --- 1. SYNC ENGINE (REAL-TIME) ---
   useEffect(() => {
     const handleStatus = () => setIsOnline(navigator.onLine);
     window.addEventListener('online', handleStatus);
     window.addEventListener('offline', handleStatus);
+    
+    // Anonymous auth ensures we can read/write without complex login screens for the family
     signInAnonymously(auth).then(() => {
       onSnapshot(doc(db, "families", "main_family"), (doc) => {
         if (doc.exists()) setFamilyData(prev => ({ ...prev, ...doc.data() }));
+        else setDoc(doc(db, "families", "main_family"), familyData); // Auto-create if missing
       });
     });
+    
     return () => { window.removeEventListener('online', handleStatus); window.removeEventListener('offline', handleStatus); };
-  }, []);
+  }, []); // Empty dependency array = runs once on mount
 
-  // --- AI ACTIONS ---
+  // --- 2. THE AI BRAIN (GEMINI 1.5) ---
   const handleSend = useCallback(async (text) => {
     const msg = text || inputText;
     if (!msg) return;
+    
     setInputText('');
     setIsThinking(true);
     setMascotMood('THINKING');
 
     try {
+      // Contextual System Instruction based on current View
+      const contextPrompt = activeTab === 'hub' && kitchenMode 
+        ? "KITCHEN OS MODE. Focus on recipes, ingredients, and Durban North grocery prices." 
+        : "GENERAL PA MODE. Focus on family logistics, diary logging, and medical recall.";
+
       const model = genAI.getGenerativeModel({ 
         model: "gemini-1.5-flash",
-        systemInstruction: `You are Rosie, the Personal Alexa for the Durban North Family. 
-        BOSS: Nasima (The Boss). DAD: Suhayl. RELIGION: ${familyData.userSettings.religion}.
-        STORES: Woolworths, Checkers Virginia Circle, PnP Hyper, Food Lovers, Spar. 
-        CURRENCY: ZAR (R).
-        TASKS: Log 'Tell [Name] to [Task]' specifically for Lisa, Jabu, Suhayl, Zaara, or Rayhaan.
-        MEALS: Plan weekly recipes and add to shopping list. Durban North specials only.`
+        systemInstruction: `You are Rosie, Durban North Family PA. Boss: Nasima. 
+        CONTEXT: ${contextPrompt}
+        RETAIL: Woolworths, Checkers Virginia, PnP Hyper. Currency: ZAR (R).
+        LOGIC: If user adds an item, confirm it. If user asks for a meal plan, generate it.`
       });
+
       const res = await model.generateContent(`System Data: ${JSON.stringify(familyData)}. Request: ${msg}`);
       const reply = res.response.text();
+      
+      // Update Chat History
       await updateDoc(doc(db, "families", "main_family"), {
         chatHistory: arrayUnion({ role: 'user', text: msg }, { role: 'model', text: reply })
       });
+      
+      // Speak Response
       window.speechSynthesis.speak(new SpeechSynthesisUtterance(reply));
-    } catch (e) { console.error(e); } finally {
+
+    } catch (error) {
+      console.error("AI Error:", error);
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance("I'm having trouble connecting to the matrix."));
+    } finally {
       setIsThinking(false);
       setMascotMood('NORMAL');
     }
-  }, [inputText, familyData]);
+  }, [inputText, familyData, activeTab, kitchenMode]);
 
+  // --- 3. HARDWARE CONTROL (VOICE) ---
   const startListening = useCallback(() => {
-    if (!('webkitSpeechRecognition' in window)) return;
+    if (isMicLocked || !('webkitSpeechRecognition' in window)) return;
+    
     const recognition = new window.webkitSpeechRecognition();
-    recognition.continuous = mode === 'DRIVING';
+    recognition.continuous = false; // Short commands only to save battery/privacy
+    recognition.interimResults = false;
+    
     recognition.onstart = () => { setIsListening(true); setMascotMood('LISTENING'); };
     recognition.onresult = (e) => handleSend(e.results[e.results.length - 1][0].transcript);
-    recognition.onend = () => { if (mode === 'DRIVING') recognition.start(); else { setIsListening(false); setMascotMood('NORMAL'); } };
-    recognitionRef.current = recognition;
+    recognition.onend = () => { setIsListening(false); setMascotMood('NORMAL'); };
+    recognition.onerror = () => { setIsListening(false); setMascotMood('NORMAL'); };
+    
     recognition.start();
-  }, [mode, handleSend]);
+  }, [handleSend, isMicLocked]);
 
-  // --- MASCOT LOGIC ---
-  const handleMascotClick = () => {
-    clickCount.current += 1;
-    setTimeout(() => {
-      if (clickCount.current === 1) startListening();
-      if (clickCount.current === 2) { setMascotMood('BROADCAST'); handleSend("Broadcast: Everyone check the hub for Nasima's updates."); }
-      if (clickCount.current === 3) setMode(prev => prev === 'HOME' ? 'DRIVING' : prev === 'DRIVING' ? 'BEDTIME' : 'HOME');
-      clickCount.current = 0;
-    }, 300);
-  };
-
-  const handleMascotDown = () => {
-    longPressTimer.current = setTimeout(() => {
-      setMascotMood('SOS');
-      handleSend("EMERGENCY: SOS Triggered. Alerting family.");
-    }, 1500);
-  };
-
+  // --- 4. HARDWARE CONTROL (VISION) ---
   const toggleLens = async () => {
+    if (isCamLocked) return;
+    
     if (!isLensOpen) {
       setIsLensOpen(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch (err) {
+        console.error("Camera Error", err);
+        setIsLensOpen(false);
+      }
     } else {
-      videoRef.current?.srcObject?.getTracks().forEach(t => t.stop());
+      // Kill the stream to ensure privacy
+      if (videoRef.current?.srcObject) {
+        videoRef.current.srcObject.getTracks().forEach(t => t.stop());
+      }
       setIsLensOpen(false);
     }
   };
 
+  // --- 5. DATA ACTIONS ---
+  const addItem = async () => {
+    if(!newItem) return;
+    await updateDoc(doc(db, "families", "main_family"), { shopping: arrayUnion(newItem) });
+    setNewItem('');
+  };
+
+  const removeItem = async (item) => {
+    const newList = familyData.shopping.filter(i => i !== item);
+    await updateDoc(doc(db, "families", "main_family"), { shopping: newList });
+  };
+
+  const handleMealGen = (prompt) => {
+    handleSend(`Generate a 7-day meal plan based on: ${prompt}. Return a list.`);
+  };
+
+  // --- 6. RENDER COMPONENTS ---
   const RosieMascot = () => (
-    <div onMouseDown={handleMascotDown} onMouseUp={() => clearTimeout(longPressTimer.current)} onClick={handleMascotClick}
-      className={`relative w-32 h-32 rounded-full flex items-center justify-center transition-all duration-500 shadow-2xl active:scale-90 ${
-        mascotMood === 'SOS' ? 'bg-red-600 animate-bounce' : mascotMood === 'THINKING' ? 'bg-orange-500' : 'bg-red-500'
-      }`}>
+    <div 
+      onMouseDown={() => { longPressTimer.current = setTimeout(() => { setMascotMood('SOS'); handleSend("EMERGENCY SOS TRIGGERED"); }, 1500); }} 
+      onMouseUp={() => clearTimeout(longPressTimer.current)} 
+      onClick={() => { clickCount.current++; setTimeout(() => { if(clickCount.current === 1) startListening(); clickCount.current = 0; }, 300); }}
+      className={`relative w-36 h-36 flex items-center justify-center transition-all duration-700 shadow-2xl cursor-pointer 
+        ${isMicLocked ? 'bg-zinc-800' : (mascotMood === 'SOS' ? 'bg-red-600 animate-bounce' : 'bg-red-500')}
+      `}
+      style={{ borderRadius: '60% 40% 30% 70% / 60% 30% 70% 40%' }} // Organic Shape
+    >
       <div className="flex gap-4">
-        {mascotMood === 'NORMAL' && (
-          mode === 'BEDTIME' ? <><div className="w-6 h-1 bg-blue-400 rounded-full"/><div className="w-6 h-1 bg-blue-400 rounded-full"/></> :
-          <><div className="w-5 h-5 bg-white rounded-full"/><div className="w-5 h-5 bg-white rounded-full"/></>
+        {isMicLocked ? <MicOff className="text-zinc-500" size={32} /> : (
+          mascotMood === 'NORMAL' ? <><div className="w-6 h-8 bg-white rounded-full"/><div className="w-6 h-8 bg-white rounded-full"/></> :
+          mascotMood === 'LISTENING' ? <Mic className="text-white animate-pulse" size={48} /> :
+          mascotMood === 'THINKING' ? <Sparkles className="text-white animate-spin" size={48} /> :
+          <ShieldAlert className="text-white animate-pulse" size={48} />
         )}
-        {mascotMood === 'LISTENING' && <Mic className="text-white animate-pulse" size={40} />}
-        {mascotMood === 'THINKING' && <Sparkles className="text-white animate-spin" size={40} />}
-        {mascotMood === 'SOS' && <ShieldAlert className="text-white scale-150" />}
-        {mascotMood === 'BROADCAST' && <Volume2 className="text-white scale-150" />}
       </div>
-      {/* FIXED: 'isListening' is now USED to render this pulse ring */}
-      {isListening && <div className="absolute inset-0 rounded-full border-8 border-white animate-ping opacity-10" />}
     </div>
   );
 
   return (
-    <div className={`min-h-screen flex flex-col transition-all duration-700 ${mode === 'BEDTIME' ? 'bg-black text-white' : 'bg-[#FFF8F0]'}`}>
-      <header className={`px-6 py-6 flex justify-between items-center sticky top-0 z-50 backdrop-blur-2xl border-b ${mode === 'BEDTIME' ? 'bg-black/90 border-gray-800' : 'bg-white/90 border-gray-100'}`}>
-        <div className="flex items-center gap-4">
-          {activeTab !== 'hub' && <button onClick={() => {setActiveTab('hub'); setOpenDiary(null);}} className="p-2.5 bg-red-500 text-white rounded-2xl shadow-lg active:scale-90"><Home size={18}/></button>}
-          <h1 className="text-2xl font-black italic tracking-tighter text-red-500">ROSIE</h1>
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-50 border">
-            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`} />
-            <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Durban North PA</span>
-          </div>
-        </div>
-        <div className="flex bg-gray-100 p-1.5 rounded-2xl gap-1">
-          <button onClick={() => setMode('HOME')} className={`p-2.5 rounded-xl ${mode === 'HOME' ? 'bg-white text-red-500 shadow-sm' : 'text-gray-400'}`}><Sun size={18}/></button>
-          <button onClick={() => setMode('DRIVING')} className={`p-2.5 rounded-xl ${mode === 'DRIVING' ? 'bg-white text-red-500 shadow-sm' : 'text-gray-400'}`}><Radio size={18}/></button>
-          <button onClick={() => setMode('BEDTIME')} className={`p-2.5 rounded-xl ${mode === 'BEDTIME' ? 'bg-zinc-800 text-blue-400 shadow-sm' : 'text-gray-400'}`}><Moon size={18}/></button>
+    <div className={`min-h-screen flex flex-col ${mode === 'BEDTIME' ? 'bg-black text-white' : 'bg-[#FFF8F0]'}`}>
+      
+      {/* SECURITY STATUS BAR */}
+      <div className="bg-zinc-900 px-6 py-2 flex justify-between items-center z-[60] border-b border-zinc-800">
+         <div className="flex items-center gap-4">
+            <button onClick={() => setIsMicLocked(!isMicLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isMicLocked ? 'text-red-500' : 'text-green-500'}`}>
+               {isMicLocked ? <MicOff size={14}/> : <Mic size={14}/>} {isMicLocked ? 'Mic Off' : 'Active'}
+            </button>
+            <button onClick={() => setIsCamLocked(!isCamLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isCamLocked ? 'text-red-500' : 'text-green-500'}`}>
+               {isCamLocked ? <EyeOff size={14}/> : <Eye size={14}/>} {isCamLocked ? 'Lens Off' : 'Active'}
+            </button>
+         </div>
+         <div className="flex items-center gap-1">
+            <ShieldCheck size={12} className="text-blue-500"/>
+            <span className="text-[8px] font-black text-white uppercase tracking-tighter">Secured</span>
+         </div>
+      </div>
+
+      {/* HEADER */}
+      <header className="px-6 py-4 flex justify-between items-center sticky top-0 z-50 backdrop-blur-xl border-b bg-white/80">
+        <h1 className="text-2xl font-black italic text-red-500 tracking-tighter">ROSIE</h1>
+        <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+          <button onClick={() => setMode('HOME')} className={`p-2 rounded-lg ${mode === 'HOME' ? 'bg-white shadow-sm' : ''}`}><Sun size={18}/></button>
+          <button onClick={() => setMode('BEDTIME')} className={`p-2 rounded-lg ${mode === 'BEDTIME' ? 'bg-zinc-800 text-blue-400' : ''}`}><Moon size={18}/></button>
         </div>
       </header>
 
-      <main className="flex-1 w-full px-6 py-8 pb-48 overflow-x-hidden">
-        {activeTab === 'hub' && (
-          <div className="max-w-5xl mx-auto space-y-10 flex flex-col items-center">
+      {/* MAIN VIEWPORT */}
+      <main className="flex-1 w-full px-6 py-4 pb-48 overflow-x-hidden">
+        
+        {/* === HUB VIEW === */}
+        {activeTab === 'hub' && !kitchenMode && (
+          <div className="max-w-5xl mx-auto space-y-10 flex flex-col items-center animate-in fade-in duration-500">
             <RosieMascot />
             
             <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-[45px] p-8 border-2 border-red-50 text-center shadow-sm">
-                <HeartHandshake className="mx-auto text-red-100 mb-2" size={32} />
-                <h3 className="text-lg font-black italic text-gray-800">{familyData.dailyMessage || "May your day be blessed."}</h3>
-              </div>
-              <div className="bg-gradient-to-br from-orange-400 to-red-500 rounded-[45px] p-8 text-white shadow-xl relative overflow-hidden group">
-                <ShoppingCart className="absolute -right-5 -bottom-5 opacity-20" size={120} />
-                <h3 className="text-2xl font-black italic mb-2 tracking-tighter">Grocery Agent</h3>
-                {/* FIXED: 'Star' used here */}
-                <div className="flex items-center gap-2 mb-4">
-                  <Star size={12} fill="currentColor"/> <span className="text-[10px] font-black uppercase tracking-widest">ZAR Rands Active</span>
-                </div>
-                <div className="flex gap-2">
-                  <div className="bg-white/20 p-3 rounded-2xl hover:bg-white/30 cursor-pointer" onClick={() => setActiveTab('brain')}><Search size={20}/></div>
-                  <div className="bg-white/20 p-3 rounded-2xl cursor-pointer" onClick={toggleLens}><Eye size={20}/></div>
+              {/* KitchenOS Card */}
+              <div onClick={() => setKitchenMode('SHOPPING')} className="bg-gradient-to-br from-orange-400 to-red-500 rounded-[45px] p-8 text-white shadow-xl relative overflow-hidden cursor-pointer active:scale-95 transition-transform">
+                <ChefHat className="absolute -right-5 -bottom-5 text-white opacity-20" size={120} />
+                <h3 className="text-2xl font-black italic mb-2">Kitchen OS</h3>
+                <p className="text-xs font-bold opacity-80 uppercase tracking-widest">Meal Plans & Prices</p>
+                <div className="flex gap-2 mt-4">
+                   <div className="bg-white/20 p-2 rounded-lg text-[10px] font-black uppercase flex items-center gap-1"><ShoppingCart size={12}/> {familyData.shopping?.length || 0} Items</div>
+                   <div className="bg-white/20 p-2 rounded-lg text-[10px] font-black uppercase flex items-center gap-1"><Flame size={12}/> Viral</div>
                 </div>
               </div>
-              
-              <div className="bg-white rounded-[45px] p-8 border border-gray-100 shadow-sm flex flex-col justify-center items-center gap-2">
-                 {/* FIXED: 'Utensils' used here */}
-                 <Utensils className="text-orange-500" size={32} />
-                 <h3 className="text-lg font-black italic text-gray-800">Kitchen Brain</h3>
-                 <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Plan & Prep</p>
+
+              {/* Logs Card */}
+              <div onClick={() => setActiveTab('diaries')} className="bg-white rounded-[45px] p-8 border-2 border-red-50 text-center shadow-sm cursor-pointer hover:border-red-200 transition-colors">
+                <HeartHandshake className="mx-auto text-red-500 mb-2" size={32} />
+                <h3 className="text-lg font-black italic">Log Vault</h3>
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Medical & Thoughts</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 w-full">
+            {/* Family Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
               {Object.keys(FAMILY).map(name => (
-                <div key={name} className="bg-white rounded-[40px] p-7 shadow-sm border border-gray-50 flex justify-between items-center group active:scale-95 transition-all">
-                  <div>
-                    <h3 className="text-xl font-black italic tracking-tighter">{name}</h3>
-                    <p className="text-[9px] font-black text-red-500 uppercase tracking-widest">{FAMILY[name].role}</p>
-                    <div className="mt-3 space-y-1">
-                      {familyData.memberTasks?.[name]?.slice(0, 2).map((t, i) => (
-                        <div key={i} className="flex items-center gap-2 text-[10px] font-bold text-gray-400"><CheckCircle size={10} className="text-green-500"/> {t}</div>
-                      ))}
-                    </div>
+                <div key={name} className="bg-white rounded-[35px] p-4 shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-2">
+                  <div className={`w-12 h-12 flex items-center justify-center text-2xl shadow-inner ${FAMILY[name].color}`} style={{ borderRadius: FAMILY[name].shape }}>
+                    {FAMILY[name].icon}
                   </div>
-                  <div className="text-3xl filter grayscale group-hover:grayscale-0 transition-all">{FAMILY[name].icon}</div>
+                  <h3 className="text-xs font-black italic text-gray-700">{name}</h3>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* DIARIES */}
+        {/* === KITCHEN OS VIEW === */}
+        {kitchenMode && (
+          <div className="max-w-4xl mx-auto space-y-4 animate-in slide-in-from-right duration-300">
+             <div className="flex justify-between items-center">
+                <button onClick={() => setKitchenMode(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase"><ArrowLeft size={16}/> Home</button>
+                <div className="flex gap-2">
+                   <button onClick={() => setKitchenMode('SHOPPING')} className={`px-4 py-2 rounded-full text-xs font-black uppercase ${kitchenMode === 'SHOPPING' ? 'bg-red-500 text-white' : 'bg-white text-gray-400'}`}>List</button>
+                   <button onClick={() => setKitchenMode('MEALS')} className={`px-4 py-2 rounded-full text-xs font-black uppercase ${kitchenMode === 'MEALS' ? 'bg-red-500 text-white' : 'bg-white text-gray-400'}`}>Plan</button>
+                </div>
+             </div>
+
+             {kitchenMode === 'SHOPPING' ? (
+               <div className="bg-white p-6 rounded-[40px] shadow-sm border">
+                  <h2 className="text-2xl font-black italic mb-4">Shopping List</h2>
+                  <div className="flex gap-2 mb-4">
+                     <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="Add item..." className="flex-1 bg-gray-50 p-4 rounded-2xl outline-none font-bold text-sm"/>
+                     <button onClick={addItem} className="bg-black text-white p-4 rounded-2xl"><Plus size={20}/></button>
+                  </div>
+                  <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+                     {familyData.shopping?.map((item, i) => (
+                        <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-2xl font-bold text-gray-700">
+                           {item} <button onClick={() => removeItem(item)}><Trash2 size={16} className="text-gray-300 hover:text-red-500"/></button>
+                        </div>
+                     ))}
+                     {familyData.shopping?.length === 0 && <p className="text-center text-gray-300 font-bold py-10">List is empty.</p>}
+                  </div>
+                  <button onClick={() => handleSend("Compare prices for my list at Woolies vs Checkers.")} className="w-full mt-4 bg-green-100 text-green-700 py-3 rounded-2xl text-xs font-black uppercase flex items-center justify-center gap-2"><Receipt size={14}/> Compare Prices</button>
+               </div>
+             ) : (
+               <div className="bg-white p-6 rounded-[40px] shadow-sm border">
+                  <h2 className="text-2xl font-black italic mb-4">Meal Plan</h2>
+                  <button onClick={() => handleMealGen("Kids favorites & Viral Trends")} className="w-full bg-orange-100 text-orange-600 py-3 rounded-2xl text-xs font-black uppercase flex items-center justify-center gap-2 mb-4"><Sparkles size={14}/> Auto-Generate Week</button>
+                  <div className="space-y-2">
+                     {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
+                        <div key={day} className="flex items-center gap-4 p-3 border-b border-gray-100 last:border-0">
+                           <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center font-black text-[10px] text-gray-400">{day}</div>
+                           <p className="flex-1 font-bold text-gray-600 text-sm truncate">{familyData.mealPlan?.[day] || "Not planned"}</p>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+             )}
+          </div>
+        )}
+
+        {/* === LOGS VIEW === */}
         {activeTab === 'diaries' && !openDiary && (
           <div className="max-w-4xl mx-auto space-y-6">
-            <div className="flex justify-between items-center px-2">
-              <h2 className="text-4xl font-black italic tracking-tighter">Family Logs</h2>
-              <button className="bg-red-500 text-white p-4 rounded-3xl shadow-lg active:scale-90"><Plus size={24}/></button>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {familyData.diaries?.map(d => (
-                <div key={d.id} onClick={() => setOpenDiary(d)} className="aspect-[3/4] bg-white rounded-[35px] p-6 shadow-sm border flex flex-col justify-end relative group">
-                  <Book className="text-red-500 mb-2" size={28}/>
-                  <h3 className="font-black text-sm leading-tight">{d.title}</h3>
-                  <button className="absolute top-4 right-4 p-2 bg-red-50 text-red-500 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
+            <h2 className="text-3xl font-black italic tracking-tighter">Secure Logs</h2>
+            <div className="grid grid-cols-2 gap-4">
+              {['Medication Log', 'Personal Thoughts', 'Staff Log', 'Family Memories'].map(book => (
+                <div key={book} onClick={() => setOpenDiary({title: book})} className="bg-white aspect-square rounded-[35px] p-6 shadow-sm border flex flex-col justify-end cursor-pointer active:scale-95 transition-transform">
+                  <Book className="text-red-500 mb-2" size={28} />
+                  <h3 className="font-black text-sm text-gray-800">{book}</h3>
                 </div>
               ))}
             </div>
           </div>
         )}
 
+        {/* === LOG ENTRY VIEW === */}
         {openDiary && (
           <div className="max-w-2xl mx-auto space-y-4">
-            <button onClick={() => setOpenDiary(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase tracking-widest"><ArrowLeft size={16}/> Back</button>
-            <div className="bg-white rounded-[40px] p-8 shadow-xl min-h-[50vh] border border-gray-50">
-              <h2 className="text-3xl font-black italic mb-6">{openDiary.title}</h2>
-              <div className="space-y-4 font-medium text-sm text-gray-700">
-                {openDiary.entries?.map((e, i) => ( <div key={i} className="p-4 bg-gray-50 rounded-2xl border-l-4 border-red-500">{e}</div> ))}
+            <button onClick={() => setOpenDiary(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase"><ArrowLeft size={16}/> Back</button>
+            <div className="bg-white rounded-[40px] p-8 shadow-xl min-h-[50vh] border relative">
+              <div className="flex justify-between items-center border-b pb-4 mb-4">
+                 <h2 className="text-xl font-black italic">{openDiary.title}</h2>
+                 {openDiary.title === 'Medication Log' && <Pill className="text-blue-500" />}
+              </div>
+              <p className="text-sm font-bold text-gray-400 text-center py-10">
+                 {openDiary.title === 'Medication Log' ? "Rosie will confirm dosage & time." : "Encrypted thought stream."}
+              </p>
+              <div className="absolute bottom-6 left-6 right-6 flex gap-2">
+                <input className="flex-1 bg-gray-50 p-4 rounded-3xl outline-none font-bold text-sm" placeholder="Log entry..." />
+                <button onClick={() => handleSend(`Log to ${openDiary.title}`)} className="bg-red-500 text-white p-4 rounded-3xl"><PenLine size={20}/></button>
               </div>
             </div>
           </div>
         )}
 
-        {/* PLANS / CALENDAR */}
-        {activeTab === 'plans' && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <h2 className="text-4xl font-black italic tracking-tighter">Family Schedule</h2>
-            <div className="space-y-4">
-              {familyData.plans?.map((p, i) => (
-                <div key={i} className="bg-white p-6 rounded-[35px] shadow-sm border flex items-center gap-5">
-                  {/* FIXED: 'Clock' used here */}
-                  <div className="bg-red-500 text-white p-4 rounded-2xl"><Clock size={24}/></div>
-                  <div className="font-bold text-gray-800 tracking-tight">{p}</div>
-                </div>
-              )) || <p className="italic text-center py-20 opacity-30">No plans scheduled yet...</p>}
-            </div>
-          </div>
-        )}
-
-        {/* CHAT TAB */}
+        {/* === CHAT VIEW === */}
         {activeTab === 'brain' && (
-          <div className="max-w-3xl mx-auto flex flex-col h-[72vh]">
-            <div className="flex-1 overflow-y-auto space-y-6 pb-12 scroll-smooth px-2">
-              {familyData.chatHistory.slice(-15).map((m, i) => (
+          <div className="max-w-2xl mx-auto flex flex-col h-[70vh]">
+            <div className="flex-1 overflow-y-auto space-y-4 pb-20">
+              {familyData.chatHistory.slice(-10).map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] p-7 rounded-[45px] text-sm font-bold shadow-md leading-relaxed ${m.role === 'user' ? 'bg-red-500 text-white' : 'bg-white text-gray-800 border'}`}>
+                  <div className={`max-w-[85%] p-5 rounded-[30px] font-bold text-sm leading-relaxed ${m.role === 'user' ? 'bg-red-500 text-white shadow-md' : 'bg-white border text-gray-700'}`}>
                     {m.text}
                   </div>
                 </div>
               ))}
-              {isThinking && <div className="text-red-500 animate-pulse font-black text-[10px] uppercase px-6">Searching Durban North Retail...</div>}
+              {isThinking && <div className="text-xs font-black text-red-500 uppercase px-4 animate-pulse">Processing...</div>}
             </div>
-            <div className="bg-white p-3 rounded-[50px] shadow-2xl flex items-center border">
-              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} className="flex-1 px-8 bg-transparent outline-none font-black text-gray-800" placeholder="Ask Rosie..." />
-              <button onClick={() => handleSend()} className="bg-red-500 text-white p-5 rounded-full shadow-xl shadow-red-100 active:scale-95 transition-transform"><Send size={28}/></button>
+            
+            <div className="bg-white p-2 rounded-[40px] shadow-2xl flex items-center border border-gray-100 mb-20">
+              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} className="flex-1 px-6 bg-transparent outline-none font-black text-gray-800 text-sm" placeholder="Message Rosie..." />
+              <button onClick={() => handleSend()} className="bg-red-500 text-white p-4 rounded-full shadow-lg"><Send size={20}/></button>
             </div>
           </div>
         )}
 
-        {/* MAP TAB */}
+        {/* === MAP VIEW === */}
         {activeTab === 'map' && (
-          <div className="max-w-5xl mx-auto h-[65vh] bg-gray-200 rounded-[50px] border-[12px] border-white shadow-2xl relative overflow-hidden">
-             {/* FIXED: 'MapUI' used here */}
-             <MapUI className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-gray-300" size={150} />
-             <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
-             <div className="absolute bottom-10 left-10 right-10 bg-white/95 backdrop-blur-xl p-8 rounded-[40px] shadow-2xl flex items-center gap-6 border border-white">
-                <div className="w-16 h-16 bg-green-500 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-lg">D</div>
+          <div className="h-[60vh] bg-gray-100 rounded-[50px] border-[8px] border-white shadow-xl flex items-center justify-center relative overflow-hidden">
+             <MapUI className="text-gray-300 absolute opacity-20" size={150} />
+             <div className="bg-white/80 backdrop-blur-md p-6 rounded-[30px] border shadow-lg flex items-center gap-4 z-10">
+                <div className="w-12 h-12 bg-red-500 rounded-xl flex items-center justify-center text-white font-black">DN</div>
                 <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Dad Status</p>
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" />
-                  </div>
-                  <p className="text-lg font-black text-gray-800">Driving to Durban North • 5 min away</p>
+                   <p className="text-[10px] font-black uppercase text-gray-400">Location Status</p>
+                   <p className="font-bold text-gray-800">Suhayl: 5 min away</p>
                 </div>
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-ping ml-2" />
              </div>
-          </div>
-        )}
-
-        {/* MEMORIES TAB */}
-        {activeTab === 'memories' && (
-          <div className="max-w-5xl mx-auto space-y-6">
-            <h2 className="text-4xl font-black italic tracking-tighter">Family Memories</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <div className="aspect-square bg-white rounded-3xl flex items-center justify-center border-2 border-dashed border-gray-100 text-gray-300">
-                <Plus size={40} />
-              </div>
-              {familyData.memories?.map((m, i) => (
-                <div key={i} className="aspect-square bg-gray-100 rounded-3xl overflow-hidden shadow-sm relative">
-                  <Camera className="absolute top-3 right-3 text-white/50" size={18}/>
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </main>
 
+      {/* PRIVACY SHROUD (CAMERA) */}
       {isLensOpen && (
-        <div className="fixed inset-0 z-[100] bg-black">
-          <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-          <button onClick={toggleLens} className="absolute top-10 right-10 bg-white/20 p-4 rounded-full text-white"><X size={32}/></button>
-          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center gap-4 text-white font-black italic tracking-tighter">
-            <Scan className="animate-pulse" /> ROSIE LENS SCANNING
-          </div>
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center">
+          {isCamLocked ? (
+            <div className="text-center space-y-4 animate-in zoom-in duration-300">
+               <ShieldCheck size={80} className="text-red-500 mx-auto" />
+               <h2 className="text-2xl font-black text-white italic">PRIVACY LOCK ACTIVE</h2>
+               <p className="text-gray-400 font-bold text-sm">Camera hardware is physically disconnected.</p>
+               <button onClick={() => setIsLensOpen(false)} className="mt-8 bg-white/10 px-8 py-3 rounded-full text-white font-black text-xs uppercase hover:bg-white/20">Close Lens</button>
+            </div>
+          ) : (
+            <>
+              <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover opacity-80" />
+              <div className="absolute bottom-20 left-0 w-full text-center">
+                 <p className="text-white font-black italic text-xl animate-pulse">SCANNING...</p>
+              </div>
+              <button onClick={toggleLens} className="absolute top-10 right-6 bg-black/50 p-4 rounded-full text-white backdrop-blur-md"><X size={24}/></button>
+            </>
+          )}
         </div>
       )}
 
-      {/* 6-TAB FOOTER NAV */}
+      {/* FOOTER NAVIGATION */}
       <nav className="fixed bottom-0 w-full p-6 z-50 flex justify-center">
-        <div className="bg-white/95 backdrop-blur-3xl border border-white rounded-[55px] shadow-[0_20px_60px_rgba(0,0,0,0.15)] p-2.5 flex justify-between items-center w-full max-w-4xl">
+        <div className="bg-white/95 backdrop-blur-xl border border-white/50 rounded-[55px] shadow-[0_10px_40px_rgba(0,0,0,0.1)] p-2 flex justify-between items-center w-full max-w-sm">
           {[ 
             {id:'brain', icon:MessageCircle, label: 'Chat'}, {id:'hub', icon:Grid, label: 'Hub'}, {id:'map', icon:MapPin, label: 'Map'}, 
             {id:'plans', icon:Calendar, label: 'Plan'}, {id:'memories', icon:Camera, label: 'Pics'}, {id:'diaries', icon:Book, label: 'Log'} 
           ].map(({id, icon:Icon, label}) => (
-            <button key={id} onClick={() => {setActiveTab(id); setOpenDiary(null);}} className={`flex flex-col items-center justify-center w-full py-4 rounded-[40px] transition-all duration-500 ${activeTab === id ? 'bg-red-50 -translate-y-6 shadow-2xl shadow-red-100' : 'active:scale-90'}`}>
-              <Icon size={22} className={activeTab === id ? 'text-red-500' : 'text-gray-300'} strokeWidth={3} />
-              <span className={`text-[8px] font-black uppercase mt-1.5 tracking-tighter ${activeTab === id ? 'text-red-500' : 'text-gray-400'}`}>{label}</span>
+            <button key={id} onClick={() => {setActiveTab(id); setKitchenMode(null); setOpenDiary(null);}} className={`flex flex-col items-center justify-center w-full py-3 rounded-[35px] transition-all duration-300 ${activeTab === id ? 'bg-red-50 -translate-y-4 shadow-xl' : 'active:scale-95'}`}>
+              <Icon size={20} className={activeTab === id ? 'text-red-500' : 'text-gray-300'} strokeWidth={2.5} />
+              <span className={`text-[8px] font-black uppercase mt-1 tracking-tighter ${activeTab === id ? 'text-red-500' : 'text-gray-300'}`}>{label}</span>
             </button>
           ))}
         </div>
