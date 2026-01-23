@@ -6,12 +6,13 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { 
   Plus, Trash2, Send, Mic, MicOff, Sparkles, Book, ArrowLeft, MessageCircle, 
   Grid, Sun, MapPin, ShoppingCart, 
-  CheckCircle, Search, Star, ShieldAlert, 
+  CheckCircle, Search, Star, 
   Calendar, Camera, Scan, Eye, EyeOff, HeartHandshake, Map as MapUI, X,
-  Pill, PenLine, Flame, ChefHat, Receipt, ShieldCheck, Zap, Radio, Volume2, UserCheck, Heart, Navigation, User
+  Pill, PenLine, Flame, ChefHat, Receipt, ShieldCheck, Radio, UserCheck, Navigation
 } from 'lucide-react';
 
 // --- 1. CONFIGURATION ---
+// REPLACE KEYS WITH YOUR OWN IF NEEDED
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
   authDomain: "rosie-pa.firebaseapp.com",
@@ -44,6 +45,8 @@ const INITIAL_DATA = {
 export default function App() {
   // --- 3. STATE ---
   const [activeTab, setActiveTab] = useState('hub');
+  
+  // View Modes
   const [kitchenMode, setKitchenMode] = useState(null); // 'SHOPPING' | 'MEALS'
   const [openDiary, setOpenDiary] = useState(null); 
   const [selectedMember, setSelectedMember] = useState(null); 
@@ -97,7 +100,7 @@ export default function App() {
     if (activeTab === 'map' || msg.toLowerCase().includes("navigate to")) {
         const dest = msg.replace(/navigate to/i, '').trim();
         if(dest) {
-          const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+          const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(dest)}`;
           window.open(url, '_blank');
           setIsThinking(false);
           setMascotMood('NORMAL');
@@ -137,7 +140,7 @@ export default function App() {
   const startListening = useCallback(() => {
     if (isMicLocked) return;
     if (!('webkitSpeechRecognition' in window)) {
-        setMicError("Mic not supported in this browser");
+        setMicError("Mic not supported");
         return;
     }
     
@@ -159,6 +162,20 @@ export default function App() {
     recognitionRef.current = recognition;
     recognition.start();
   }, [handleSend, isMicLocked]);
+
+  const toggleLens = async () => {
+    if (isCamLocked) return;
+    if (!isLensOpen) {
+      setIsLensOpen(true);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch(e) { setIsLensOpen(false); }
+    } else {
+      if (videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t => t.stop());
+      setIsLensOpen(false);
+    }
+  };
 
   // --- 6. ACTIONS ---
   const addTask = async (member, task) => {
@@ -207,10 +224,10 @@ export default function App() {
       <div className="bg-zinc-900 px-6 py-2 flex justify-between items-center z-[60]">
          <div className="flex gap-4">
             <button onClick={() => setIsMicLocked(!isMicLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isMicLocked ? 'text-red-500' : 'text-green-500'}`}>
-               {isMicLocked ? <MicOff size={14}/> : <Mic size={14}/>} {isMicLocked ? 'Privacy' : 'Mic Live'}
+               {isMicLocked ? <MicOff size={14}/> : <Mic size={14}/>} {isMicLocked ? 'Privacy' : 'Live'}
             </button>
             <button onClick={() => setIsCamLocked(!isCamLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isCamLocked ? 'text-red-500' : 'text-green-500'}`}>
-               {isCamLocked ? <EyeOff size={14}/> : <Eye size={14}/>} {isCamLocked ? 'Lens Locked' : 'Lens Live'}
+               {isCamLocked ? <EyeOff size={14}/> : <Eye size={14}/>} {isCamLocked ? 'Lens Locked' : 'Live'}
             </button>
          </div>
          <ShieldCheck size={14} className="text-blue-500"/>
@@ -389,17 +406,21 @@ export default function App() {
              </div>
         )}
 
-        {/* === PLANS & PICS PLACEHOLDERS (No more dead tabs) === */}
+        {/* === PLANS & PICS (NO MORE DEAD TABS) === */}
         {activeTab === 'plans' && (
             <div className="flex flex-col items-center justify-center h-[50vh] text-center space-y-4">
                 <Calendar size={64} className="text-gray-200" />
                 <h3 className="text-xl font-black italic text-gray-400">Calendar Syncing...</h3>
+                <p className="text-xs font-bold text-gray-300">Checking Google Calendar</p>
             </div>
         )}
         {activeTab === 'memories' && (
             <div className="flex flex-col items-center justify-center h-[50vh] text-center space-y-4">
                 <Camera size={64} className="text-gray-200" />
-                <h3 className="text-xl font-black italic text-gray-400">Family Gallery Empty</h3>
+                <h3 className="text-xl font-black italic text-gray-400">Family Gallery</h3>
+                <button onClick={toggleLens} className="bg-black text-white px-6 py-3 rounded-full text-xs font-black uppercase flex items-center gap-2">
+                    <Scan size={16}/> Open Rosie Lens
+                </button>
             </div>
         )}
 
@@ -419,6 +440,27 @@ export default function App() {
           </div>
         )}
       </main>
+      
+      {/* LENS OVERLAY */}
+      {isLensOpen && (
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center">
+          {isCamLocked ? (
+            <div className="text-center space-y-4 animate-in zoom-in duration-300">
+               <ShieldCheck size={80} className="text-red-500 mx-auto" />
+               <h2 className="text-2xl font-black text-white italic">PRIVACY LOCK ACTIVE</h2>
+               <button onClick={() => setIsLensOpen(false)} className="mt-8 bg-white/10 px-8 py-3 rounded-full text-white font-black text-xs uppercase">Close</button>
+            </div>
+          ) : (
+            <>
+              <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border-4 border-white/30 w-64 h-64 rounded-[40px] flex items-center justify-center">
+                 <Scan size={64} className="text-white/50 animate-pulse"/>
+              </div>
+              <button onClick={toggleLens} className="absolute top-10 right-6 bg-black/50 p-4 rounded-full text-white"><X size={24}/></button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* FOOTER NAV */}
       <nav className="fixed bottom-0 w-full p-6 z-50 flex justify-center">
