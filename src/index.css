@@ -9,30 +9,31 @@ body {
   overflow: hidden;
 }
 
-/* --- ROSIE RADIO WAVES --- */
-@keyframes wave-pulse {
-  0% { transform: scale(1); opacity: 0.8; stroke-width: 2; }
-  100% { transform: scale(1.5); opacity: 0; stroke-width: 1; }
+/* --- THE RADIO WAVE ENGINE --- */
+@keyframes signal-pulse {
+  0% { transform: scale(1); opacity: 0.6; stroke-width: 2; }
+  100% { transform: scale(1.6); opacity: 0; stroke-width: 1; }
 }
 
-.radio-wave {
+.signal-wave {
   fill: none;
-  stroke: #FF7F50;
-  animation: wave-pulse 2s infinite;
+  stroke: #FB923C; /* Orange-400 */
+  animation: signal-pulse 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
 }
 
-.radio-wave:nth-child(2) { animation-delay: 0.5s; }
-.radio-wave:nth-child(3) { animation-delay: 1s; }
+.signal-wave:nth-child(2) { animation-delay: 0.6s; }
+.signal-wave:nth-child(3) { animation-delay: 1.2s; }
 
-/* Lip Sync Animation */
-@keyframes mouth-talk {
+/* Dynamic Lip-Sync */
+@keyframes mouth-move {
   0%, 100% { d: path("M85,115 Q100,130 115,115"); }
-  50% { d: path("M85,125 Q100,150 115,125"); }
+  50% { d: path("M80,125 Q100,155 120,125"); }
 }
-.animate-talk { animation: mouth-talk 0.2s infinite; }
+.mouth-talking { animation: mouth-move 0.15s infinite ease-in-out; }
 
-.animate-float { animation: float-breathing 4s infinite ease-in-out; }
-@keyframes float-breathing {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+/* Mascot Float & Glow */
+.animate-rosie-idle { animation: float-idle 4s infinite ease-in-out; }
+@keyframes float-idle {
+  0%, 100% { transform: translateY(0) scale(1); filter: drop-shadow(0 5px 15px rgba(251, 146, 60, 0.2)); }
+  50% { transform: translateY(-12px) scale(1.02); filter: drop-shadow(0 20px 25px rgba(251, 146, 60, 0.4)); }
 }
