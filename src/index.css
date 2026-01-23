@@ -17,7 +17,7 @@ body {
 
 .signal-wave {
   fill: none;
-  stroke: #FB923C; /* Orange-400 */
+  stroke: #FB923C;
   animation: signal-pulse 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
 }
 
