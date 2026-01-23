@@ -5,7 +5,7 @@ import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion, setDoc } from 'fi
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { 
   Plus, Trash2, Send, Mic, MicOff, Sparkles, Book, ArrowLeft, MessageCircle, 
-  Grid, Moon, Sun, MapPin, Home, ShoppingCart, 
+  Grid, Moon, Sun, MapPin, ShoppingCart, 
   CheckCircle, Search, Star, Utensils, ShieldAlert, 
   Calendar, Camera, Scan, Eye, EyeOff, HeartHandshake, Map as MapUI, X,
   Pill, PenLine, Flame, ChefHat, Receipt, ShieldCheck, Zap, Radio, Volume2, UserCheck, Heart
@@ -21,7 +21,7 @@ const FIREBASE_CONFIG = {
   appId: "1:767772651557:web:239816f833c5af7c20cfcc"
 };
 
-// Singleton Init to prevent hot-reload crashes
+// Singleton Init
 const app = !getApps().length ? initializeApp(FIREBASE_CONFIG) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -102,7 +102,7 @@ export default function App() {
     setIsThinking(true);
     setMascotMood('THINKING');
     
-    // ⚡ PRE-EMPTION: Stop current speech to listen to new command immediately
+    // ⚡ PRE-EMPTION
     window.speechSynthesis.cancel();
 
     try {
@@ -121,10 +121,9 @@ export default function App() {
         chatHistory: arrayUnion({ role: 'user', text: msg }, { role: 'model', text: reply })
       });
       
-      // ⚡ INSTANT FEEDBACK LOOP
+      // ⚡ INSTANT FEEDBACK
       const utterance = new SpeechSynthesisUtterance(reply);
       utterance.onend = () => { 
-        // Auto-restart mic if not locked (Continuous Mode)
         if(!isMicLocked) startListening(); 
       };
       window.speechSynthesis.speak(utterance);
@@ -367,9 +366,33 @@ export default function App() {
                 </div>
               ))}
             </div>
+            
+            {/* Visual Feedback for Thinking State */}
+            {isThinking && (
+              <div className="absolute bottom-24 left-0 w-full flex justify-center">
+                 <div className="bg-white/80 backdrop-blur-md px-4 py-2 rounded-full shadow-sm border border-red-100 flex items-center gap-2">
+                    <Sparkles size={12} className="text-red-500 animate-spin"/>
+                    <span className="text-[10px] font-black text-red-500 uppercase tracking-widest">Rosie is processing...</span>
+                 </div>
+              </div>
+            )}
+
             <div className="bg-white p-2 rounded-[40px] shadow-2xl flex items-center border border-gray-100 mb-20">
-              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} className="flex-1 px-6 bg-transparent outline-none font-black text-gray-800 text-sm" placeholder="Message Rosie..." />
-              <button onClick={() => handleSend()} className="bg-red-500 text-white p-4 rounded-full shadow-lg"><Send size={20}/></button>
+              <input 
+                value={inputText} 
+                onChange={e => setInputText(e.target.value)} 
+                onKeyPress={e => e.key === 'Enter' && handleSend()} 
+                className="flex-1 px-6 bg-transparent outline-none font-black text-gray-800 text-sm" 
+                placeholder={isThinking ? "Thinking..." : "Message Rosie..."}
+                disabled={isThinking}
+              />
+              <button 
+                onClick={() => handleSend()} 
+                disabled={isThinking}
+                className={`p-4 rounded-full shadow-lg transition-all ${isThinking ? 'bg-gray-300 cursor-wait' : 'bg-red-500 text-white'}`}
+              >
+                <Send size={20}/>
+              </button>
             </div>
           </div>
         )}
