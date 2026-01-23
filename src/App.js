@@ -4,14 +4,12 @@ import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, doc, onSnapshot, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { 
-  Plus, Trash2, Send, Mic, MicOff, Sparkles, Book, ArrowLeft, MessageCircle, 
-  Grid, Sun, MapPin, ShoppingCart, 
-  CheckCircle, Search, Star, 
-  Calendar, Camera, Scan, Eye, EyeOff, HeartHandshake, Map as MapUI, X,
-  Pill, PenLine, Flame, ChefHat, Receipt, ShieldCheck, Radio, UserCheck, Navigation
+  Plus, Send, Mic, MicOff, Sparkles, MessageCircle, 
+  Grid, MapPin, Radio, ArrowLeft, ChefHat, HeartHandshake, 
+  Eye, EyeOff, ShieldCheck, Lightbulb, Search, Volume2
 } from 'lucide-react';
 
-// --- 1. CONFIGURATION ---
+// --- CONFIG ---
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
   authDomain: "rosie-pa.firebaseapp.com",
@@ -26,392 +24,238 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const genAI = new GoogleGenerativeAI("AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo");
 
-// --- 2. STATIC ASSETS ---
-const FAMILY_MEMBERS = [
-  { name: "Nasima", role: "Mum (Boss)", color: "bg-rose-100 text-rose-600", icon: "👸" },
-  { name: "Suhayl", role: "Dad", color: "bg-blue-100 text-blue-600", icon: "🧔" },
-  { name: "Rayhaan", role: "Son", color: "bg-green-100 text-green-600", icon: "👦" },
-  { name: "Zaara", role: "Daughter", color: "bg-purple-100 text-purple-600", icon: "👧" },
-  { name: "Lisa", role: "Maintenance", color: "bg-orange-100 text-orange-600", icon: "🛠️" },
-  { name: "Jabu", role: "Helper", color: "bg-teal-100 text-teal-600", icon: "🧹" }
-];
-
-const INITIAL_DATA = { 
-  chatHistory: [], shopping: [], memberTasks: {}, diaries: [], 
-  plans: [], memories: [], mealPlan: {}, userSettings: { religion: 'Islam' } 
-};
-
 export default function App() {
   const [activeTab, setActiveTab] = useState('hub');
-  const [kitchenMode, setKitchenMode] = useState(null); 
-  const [openDiary, setOpenDiary] = useState(null); 
-  const [selectedMember, setSelectedMember] = useState(null); 
-  
   const [isMicLocked, setIsMicLocked] = useState(false);
-  const [isCamLocked, setIsCamLocked] = useState(false);
-  
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
-  const [isLensOpen, setIsLensOpen] = useState(false);
-  const [micError, setMicError] = useState("");
-  
-  const [familyData, setFamilyData] = useState(INITIAL_DATA);
-  const [inputText, setInputText] = useState('');
-  const [newItem, setNewItem] = useState('');
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [mascotMood, setMascotMood] = useState('NORMAL');
+  const [familyData, setFamilyData] = useState({ chatHistory: [], shopping: [] });
+  const [inputText, setInputText] = useState('');
   
-  const videoRef = useRef(null);
   const recognitionRef = useRef(null);
-  const longPressTimer = useRef(null);
-  const clickCount = useRef(0);
+  const synthRef = window.speechSynthesis;
 
-  useEffect(() => {
-    signInAnonymously(auth).then(() => {
-      onSnapshot(doc(db, "families", "main_family"), (docSnap) => {
-        if (docSnap.exists()) {
-          setFamilyData(prev => ({ ...prev, ...docSnap.data() }));
-        } else {
-          setDoc(doc(db, "families", "main_family"), INITIAL_DATA);
-        }
-      });
-    }).catch(e => console.error("Auth Error:", e));
-  }, []);
-
+  // --- 1. THE CONVERSATIONAL BRAIN ---
   const handleSend = useCallback(async (text) => {
+    if (!text && !inputText) return;
     const msg = text || inputText;
-    if (!msg) return;
     
     setInputText('');
     setIsThinking(true);
     setMascotMood('THINKING');
-    window.speechSynthesis.cancel();
-
-    if (activeTab === 'map' || msg.toLowerCase().includes("navigate to")) {
-        const dest = msg.replace(/navigate to/i, '').trim();
-        if(dest) {
-          const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
-          window.open(url, '_blank');
-          setIsThinking(false);
-          setMascotMood('NORMAL');
-          return;
-        }
-    }
+    synthRef.cancel(); // Stop talking to listen
 
     try {
       const model = genAI.getGenerativeModel({ 
         model: "gemini-1.5-flash",
-        systemInstruction: `You are Rosie, Durban North Family PA. Boss: Nasima.
-        FAMILY: Suhayl, Rayhaan, Zaara. STAFF: Lisa, Jabu.
-        LOCATIONS: Gateway, Woolworths, Checkers.
-        RESPONSE: Short, punchy, verbal.`
+        systemInstruction: `You are Rosie, the Durban North Family Companion. 
+        TONE: Playful, ultra-fast, and helpful. 
+        STYLE: Use short sentences for voice. 
+        RADIO MODE: If asked to research or read, compile a clear, interesting report.
+        WAKE WORD: Your name is Rosie.`
       });
 
-      const res = await model.generateContent(`Data: ${JSON.stringify(familyData)}. Input: ${msg}`);
+      const res = await model.generateContent(`Context: ${JSON.stringify(familyData)}. Prompt: ${msg}`);
       const reply = res.response.text();
-      
+
+      // Update Firebase
       updateDoc(doc(db, "families", "main_family"), {
         chatHistory: arrayUnion({ role: 'user', text: msg }, { role: 'model', text: reply })
       });
-      
-      const utterance = new SpeechSynthesisUtterance(reply);
-      utterance.onend = () => { if(!isMicLocked) startListening(); };
-      window.speechSynthesis.speak(utterance);
 
-    } catch (err) {
-      console.error(err);
-      setMascotMood('SOS');
-    } finally {
+      setMascotMood('IDEA');
       setIsThinking(false);
+      speak(reply);
+
+    } catch (e) {
       setMascotMood('NORMAL');
+      setIsThinking(false);
     }
-  }, [inputText, familyData, isMicLocked, activeTab]); 
+  }, [inputText, familyData]); // eslint-disable-line
 
-  const startListening = useCallback(() => {
-    if (isMicLocked) return;
-    if (!('webkitSpeechRecognition' in window)) {
-        setMicError("Mic not supported in this browser");
-        return;
-    }
+  // --- 2. HIGH-SPEED SPEECH ENGINE ---
+  const speak = (text) => {
+    setIsSpeaking(true);
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1; // Slightly faster for natural feel
+    utterance.pitch = 1.2; // Playful Rosie tone
     
-    if (recognitionRef.current) recognitionRef.current.stop();
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setMascotMood('NORMAL');
+      if (!isMicLocked) startWakeWordListener(); // Go back to listening
+    };
 
+    synthRef.speak(utterance);
+  };
+
+  // --- 3. WAKE WORD LISTENER (ROSIE...) ---
+  const startWakeWordListener = useCallback(() => {
+    if (isMicLocked || isSpeaking || !('webkitSpeechRecognition' in window)) return;
+    
     const recognition = new window.webkitSpeechRecognition();
-    recognition.continuous = false;
-    recognition.lang = 'en-ZA'; 
-    recognition.onstart = () => { setIsListening(true); setMascotMood('LISTENING'); setMicError(""); };
-    recognition.onresult = (e) => handleSend(e.results[e.results.length - 1][0].transcript);
-    recognition.onend = () => { setIsListening(false); setMascotMood('NORMAL'); };
-    recognition.onerror = (e) => { 
-        console.log("Mic Error", e); 
-        setIsListening(false); 
-        setMascotMood('NORMAL');
-        setMicError("Mic blocked. Tap to retry."); 
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-ZA';
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
+      
+      // Check for Wake Word or "Research" command
+      if (transcript.includes("rosie")) {
+        recognition.stop();
+        setMascotMood('LISTENING');
+        setIsListening(true);
+        // Direct trigger after wake word
+        const command = transcript.split("rosie")[1];
+        if (command && command.length > 3) {
+          handleSend(command);
+        } else {
+          // Just heard name, wait for full command
+          setTimeout(() => startWakeWordListener(), 1000);
+        }
+      }
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      if (!isMicLocked && !isSpeaking) recognition.start();
     };
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [handleSend, isMicLocked]);
+  }, [isMicLocked, isSpeaking, handleSend]);
 
-  const addTask = async (member, task) => {
-    if(!task) return;
-    const currentTasks = familyData.memberTasks?.[member] || [];
-    await updateDoc(doc(db, "families", "main_family"), { 
-        [`memberTasks.${member}`]: [...currentTasks, task] 
+  useEffect(() => {
+    signInAnonymously(auth).then(() => {
+      onSnapshot(doc(db, "families", "main_family"), (docSnap) => {
+        if (docSnap.exists()) setFamilyData(prev => ({ ...prev, ...docSnap.data() }));
+      });
     });
-    setNewItem('');
-  };
+    startWakeWordListener();
+    return () => synthRef.cancel();
+  }, [startWakeWordListener]); // eslint-disable-line
 
-  const addItem = async () => {
-    if(!newItem) return;
-    await updateDoc(doc(db, "families", "main_family"), { shopping: arrayUnion(newItem) });
-    setNewItem('');
-  };
-
-  const removeItem = async (item) => {
-    const newList = familyData.shopping.filter(i => i !== item);
-    await updateDoc(doc(db, "families", "main_family"), { shopping: newList });
-  };
-
+  // --- 4. PRECISION MASCOT ---
   const RosieMascot = () => (
-    <div 
-      onMouseDown={() => { longPressTimer.current = setTimeout(() => { setMascotMood('SOS'); handleSend("SOS triggered."); }, 1500); }} 
-      onMouseUp={() => clearTimeout(longPressTimer.current)} 
-      onClick={() => { clickCount.current++; setTimeout(() => { if(clickCount.current === 1) startListening(); clickCount.current = 0; }, 300); }}
-      className={`relative w-40 h-40 flex items-center justify-center transition-all duration-500 shadow-2xl cursor-pointer active:scale-95 ${isMicLocked ? 'bg-zinc-800' : (mascotMood === 'SOS' ? 'bg-red-600 animate-bounce' : 'bg-red-500')}`}
-      style={{ borderRadius: '60% 40% 30% 70% / 60% 30% 70% 40%' }}
-    >
-      <div className="flex gap-4">
-        {isMicLocked ? <MicOff className="text-zinc-500" size={32} /> : (
-          mascotMood === 'NORMAL' ? <><div className="w-8 h-10 bg-white rounded-full animate-pulse"/><div className="w-8 h-10 bg-white rounded-full animate-pulse"/></> :
-          mascotMood === 'LISTENING' ? <Mic className="text-white animate-pulse" size={60} /> :
-          <Sparkles className="text-white animate-spin" size={60} />
-        )}
-      </div>
-      {micError && <div className="absolute -bottom-12 bg-red-100 text-red-600 text-[10px] font-black px-3 py-1 rounded-full whitespace-nowrap border border-red-200">{micError}</div>}
+    <div className="relative w-72 h-72 flex justify-center items-center cursor-pointer" onClick={() => handleSend("Rosie, tell me a news update")}>
+      {/* Radio Wave Background (only when speaking/radio mode) */}
+      {isSpeaking && (
+        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 200 200">
+          <circle className="radio-wave" cx="100" cy="100" r="40" />
+          <circle className="radio-wave" cx="100" cy="100" r="40" />
+          <circle className="radio-wave" cx="100" cy="100" r="40" />
+        </svg>
+      )}
+
+      <svg viewBox="0 0 200 200" className={`w-full h-full animate-float transition-all duration-500`}>
+        <path fill="#FF7F50" d="M100,20 C120,20 130,40 150,45 C170,50 185,70 180,95 C175,120 185,145 165,160 C145,175 125,165 100,180 C75,165 55,175 35,160 C15,145 25,120 20,95 C15,70 30,50 50,45 C70,40 80,20 100,20 Z" />
+        <g transform="translate(75, 80)">
+           <circle fill="white" cx="0" cy="0" r="13" />
+           <circle fill="black" cx={isThinking ? "4" : "0"} cy="0" r="6" />
+           <circle fill="white" cx="50" cy="0" r="13" />
+           <circle fill="black" cx={isThinking ? "46" : "50"} cy="0" r="6" />
+        </g>
+        <path 
+          d="M85,115 Q100,130 115,115" 
+          fill="none" 
+          stroke="black" 
+          strokeWidth="3" 
+          strokeLinecap="round" 
+          className={isSpeaking ? "animate-talk" : ""}
+        />
+      </svg>
+      
+      {isThinking && <div className="absolute top-0 right-0 p-4 bg-white rounded-full shadow-lg animate-bounce"><Sparkles className="text-orange-500"/></div>}
+      {mascotMood === 'IDEA' && <div className="absolute -top-10"><Lightbulb size={60} className="text-yellow-400 animate-pulse" fill="currentColor"/></div>}
     </div>
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FFF8F0] overflow-hidden">
+    <div className={`min-h-screen ${isMicLocked ? 'bg-zinc-100' : 'bg-[#FFF8F0]'} flex flex-col transition-colors duration-1000`}>
+      {/* PRIVACY BAR */}
       <div className="bg-zinc-900 px-6 py-2 flex justify-between items-center z-[60]">
-         <div className="flex gap-4">
-            <button onClick={() => setIsMicLocked(!isMicLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isMicLocked ? 'text-red-500' : 'text-green-500'}`}>
-               {isMicLocked ? <MicOff size={14}/> : <Mic size={14}/>} {isMicLocked ? 'Privacy' : 'Live'}
-            </button>
-            <button onClick={() => setIsCamLocked(!isCamLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isCamLocked ? 'text-red-500' : 'text-green-500'}`}>
-               {isCamLocked ? <EyeOff size={14}/> : <Eye size={14}/>} {isCamLocked ? 'Lens Locked' : 'Live'}
-            </button>
-         </div>
+         <button onClick={() => setIsMicLocked(!isMicLocked)} className={`flex items-center gap-2 text-[10px] font-black uppercase ${isMicLocked ? 'text-red-500' : 'text-green-500'}`}>
+            {isMicLocked ? <MicOff size={14}/> : <Mic size={14}/>} {isMicLocked ? 'Privacy Mode' : 'Wake Word: Rosie'}
+         </button>
          <ShieldCheck size={14} className="text-blue-500"/>
       </div>
 
-      <header className="px-6 py-4 flex justify-between items-center sticky top-0 z-50 backdrop-blur-md border-b bg-white/80">
-        <h1 className="text-2xl font-black italic text-red-500 tracking-tighter">ROSIE</h1>
-        <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
-          <div className="p-2 rounded-lg bg-white shadow-sm"><Sun size={18}/></div>
-          <div className="p-2 rounded-lg text-gray-400"><Radio size={18}/></div>
-        </div>
-      </header>
-
-      <main className="flex-1 w-full px-6 py-6 pb-48 overflow-x-hidden overflow-y-auto">
-        {activeTab === 'hub' && !kitchenMode && !selectedMember && !openDiary && (
-          <div className="max-w-5xl mx-auto space-y-10 flex flex-col items-center">
+      <main className="flex-1 flex flex-col items-center px-6 py-10 overflow-y-auto">
+        {activeTab === 'hub' && (
+          <div className="max-w-md w-full flex flex-col items-center gap-8">
             <RosieMascot />
-            <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
-              <button onClick={() => setKitchenMode('SHOPPING')} className="bg-gradient-to-br from-orange-400 to-red-500 rounded-[45px] p-8 text-white shadow-xl relative overflow-hidden cursor-pointer active:scale-95 transition-transform text-left w-full">
-                <ChefHat className="absolute -right-5 -bottom-5 text-white opacity-20" size={120} />
-                <h3 className="text-2xl font-black italic mb-2">Kitchen OS</h3>
-                <p className="text-xs font-bold opacity-80 uppercase tracking-widest">Pricing • Meals</p>
-                <div className="flex gap-2 mt-4">
-                   <div className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1">🛒 {familyData.shopping?.length || 0}</div>
-                   <div className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1"><Search size={10}/> Price Check</div>
-                </div>
-              </button>
-              <button onClick={() => setActiveTab('diaries')} className="bg-white rounded-[45px] p-8 border-2 border-red-50 text-center shadow-sm cursor-pointer active:scale-95 transition-transform w-full">
-                <HeartHandshake className="mx-auto text-red-500 mb-2" size={32} />
-                <h3 className="text-lg font-black italic">Log Vault</h3>
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Medical & Thoughts</p>
-              </button>
+            
+            <div className="text-center space-y-2">
+              <h1 className="text-4xl font-black text-gray-800">ROSIE RADIO</h1>
+              <p className="text-xs font-bold text-orange-400 uppercase tracking-widest">Say "Rosie, research [topic]"</p>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
-              {FAMILY_MEMBERS.map((member) => (
-                <button key={member.name} onClick={() => setSelectedMember(member)} className="bg-white rounded-[35px] p-4 shadow-sm border border-gray-50 flex flex-col items-center justify-center gap-2 active:scale-90 transition-transform">
-                  <div className={`w-12 h-12 flex items-center justify-center text-2xl shadow-inner rounded-full ${member.color}`}>
-                    {member.icon}
+
+            <div className="grid grid-cols-1 gap-4 w-full">
+              <button onClick={() => handleSend("Rosie, give me the daily briefing")} className="bg-white border-4 border-orange-200 p-6 rounded-[40px] shadow-xl flex items-center justify-between group active:scale-95 transition-all">
+                <div className="flex items-center gap-4">
+                  <div className="bg-orange-100 p-4 rounded-3xl text-orange-600"><Radio size={24}/></div>
+                  <div className="text-left">
+                    <h3 className="font-black italic">Morning Briefing</h3>
+                    <p className="text-[10px] font-bold text-gray-400">RESEARCH & READ</p>
                   </div>
-                  <h3 className="text-[10px] font-black italic text-gray-700">{member.name}</h3>
-                </button>
-              ))}
+                </div>
+                <Volume2 className="text-orange-300" />
+              </button>
+
+              <button onClick={() => setActiveTab('brain')} className="bg-white border-4 border-blue-100 p-6 rounded-[40px] shadow-xl flex items-center justify-between group active:scale-95 transition-all">
+                <div className="flex items-center gap-4">
+                  <div className="bg-blue-100 p-4 rounded-3xl text-blue-600"><MessageCircle size={24}/></div>
+                  <div className="text-left">
+                    <h3 className="font-black italic">Chat Mode</h3>
+                    <p className="text-[10px] font-bold text-gray-400">INSTANT RESPONSES</p>
+                  </div>
+                </div>
+                <Zap className="text-blue-300" />
+              </button>
             </div>
           </div>
-        )}
-
-        {kitchenMode && (
-          <div className="max-w-4xl mx-auto space-y-4">
-             <button onClick={() => setKitchenMode(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase"><ArrowLeft size={16}/> Back</button>
-             <div className="bg-white p-6 rounded-[40px] shadow-sm border">
-                <div className="flex justify-between items-center mb-4">
-                   <h2 className="text-2xl font-black italic">{kitchenMode === 'SHOPPING' ? 'Shopping' : 'Meal Plan'}</h2>
-                   <div className="flex gap-1 bg-gray-50 p-1 rounded-xl">
-                      <button onClick={() => setKitchenMode('SHOPPING')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase ${kitchenMode === 'SHOPPING' ? 'bg-red-500 text-white' : 'text-gray-400'}`}>List</button>
-                      <button onClick={() => setKitchenMode('MEALS')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase ${kitchenMode === 'MEALS' ? 'bg-red-500 text-white' : 'text-gray-400'}`}>Meals</button>
-                   </div>
-                </div>
-                {kitchenMode === 'SHOPPING' ? (
-                   <>
-                      <div className="flex gap-2 mb-4">
-                         <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="Add item..." className="flex-1 bg-gray-50 p-4 rounded-2xl outline-none font-bold text-sm"/>
-                         <button onClick={addItem} className="bg-black text-white p-4 rounded-2xl"><Plus size={20}/></button>
-                      </div>
-                      <div className="space-y-2 max-h-[40vh] overflow-y-auto">
-                         {familyData.shopping?.map((item, i) => (
-                            <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-2xl font-bold text-gray-700">
-                               {item} <button onClick={() => removeItem(item)}><Trash2 size={16} className="text-gray-300 hover:text-red-500"/></button>
-                            </div>
-                         ))}
-                      </div>
-                      <button onClick={() => handleSend("Run Price Check analysis")} className="w-full mt-4 bg-green-100 text-green-700 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2"><Receipt size={14}/> Run Price Check</button>
-                   </>
-                ) : (
-                   <div className="space-y-2">
-                      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
-                         <div key={day} className="flex items-center gap-4 p-4 border-b border-gray-50 last:border-0">
-                            <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center font-black text-[10px] text-red-500">{day}</div>
-                            <p className="flex-1 font-bold text-gray-600 text-sm truncate">{familyData.mealPlan?.[day] || "Plan needed"}</p>
-                         </div>
-                      ))}
-                      <button onClick={() => handleSend("Generate viral meal plan")} className="w-full mt-6 bg-black text-white py-4 rounded-3xl font-black uppercase text-xs flex items-center justify-center gap-2"><Flame size={14}/> Auto-Gen</button>
-                   </div>
-                )}
-             </div>
-          </div>
-        )}
-
-        {selectedMember && (
-            <div className="max-w-4xl mx-auto space-y-4">
-                <button onClick={() => setSelectedMember(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase"><ArrowLeft size={16}/> Back</button>
-                <div className="bg-white p-6 rounded-[40px] shadow-sm border">
-                    <div className="flex items-center gap-4 mb-6">
-                        <div className={`w-16 h-16 flex items-center justify-center text-3xl rounded-full ${selectedMember.color}`}>{selectedMember.icon}</div>
-                        <div>
-                            <h2 className="text-2xl font-black italic">{selectedMember.name}</h2>
-                            <p className="text-xs font-black text-gray-400 uppercase tracking-widest">{selectedMember.role}</p>
-                        </div>
-                    </div>
-                    <div className="flex gap-2 mb-4">
-                         <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder={`Add task for ${selectedMember.name}...`} className="flex-1 bg-gray-50 p-4 rounded-2xl outline-none font-bold text-sm"/>
-                         <button onClick={() => {addTask(selectedMember.name, newItem); setNewItem('')}} className="bg-black text-white p-4 rounded-2xl"><Plus size={20}/></button>
-                    </div>
-                    <div className="space-y-2">
-                        {(familyData.memberTasks?.[selectedMember.name] || []).map((t, i) => (
-                            <div key={i} className="p-4 bg-gray-50 rounded-2xl font-bold text-gray-700 flex gap-2 items-center">
-                                <CheckCircle size={16} className="text-green-500"/> {t}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
         )}
 
         {activeTab === 'brain' && (
-          <div className="max-w-2xl mx-auto flex flex-col h-[70vh]">
-            <div className="flex-1 overflow-y-auto space-y-4 pb-20 scroll-smooth">
-              {familyData.chatHistory.slice(-8).map((m, i) => (
+          <div className="w-full max-w-2xl h-full flex flex-col">
+            <button onClick={() => setActiveTab('hub')} className="mb-4 text-orange-500 font-black flex items-center gap-2"><ArrowLeft/> Back</button>
+            <div className="flex-1 overflow-y-auto space-y-4 pb-24">
+              {familyData.chatHistory?.slice(-10).map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] p-5 rounded-[30px] font-bold text-sm leading-relaxed ${m.role === 'user' ? 'bg-red-500 text-white shadow-md' : 'bg-white border text-gray-700'}`}>
-                    {m.text}
-                  </div>
+                  <div className={`max-w-[85%] p-4 rounded-[30px] font-bold text-sm ${m.role === 'user' ? 'bg-orange-500 text-white' : 'bg-white border'}`}>{m.text}</div>
                 </div>
               ))}
             </div>
-            <div className="bg-white p-2 rounded-[40px] shadow-2xl flex items-center border border-gray-100 mb-20">
-              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} className="flex-1 px-6 bg-transparent outline-none font-black text-gray-800 text-sm" placeholder="Message Rosie..." />
-              <button onClick={() => handleSend()} className="bg-red-500 text-white p-4 rounded-full shadow-lg"><Send size={20}/></button>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'map' && (
-           <div className="max-w-5xl mx-auto h-[65vh] bg-gray-100 rounded-[50px] border-[8px] border-white shadow-2xl relative overflow-hidden flex flex-col items-center justify-center text-center p-8">
-              <MapUI className="text-gray-300 absolute opacity-20" size={200} />
-              <div className="z-10 space-y-6">
-                  <div className="bg-white/90 backdrop-blur-md p-8 rounded-[40px] shadow-xl border">
-                    <Navigation size={64} className="mx-auto text-blue-500 mb-4" />
-                    <h2 className="text-3xl font-black italic text-gray-800">Voice Navigation</h2>
-                    <p className="text-sm font-bold text-gray-400 mb-6">"Navigate to Gateway"</p>
-                    <button onClick={() => handleSend("Navigate to...")} className="bg-blue-500 text-white px-8 py-4 rounded-full font-black uppercase text-sm shadow-lg active:scale-95 transition-transform flex items-center gap-2 mx-auto">
-                       <Mic size={18}/> Start
-                    </button>
-                  </div>
-                  <div className="bg-white/80 p-4 rounded-3xl flex items-center gap-3 w-fit mx-auto">
-                     <UserCheck size={16} className="text-green-500"/>
-                     <span className="text-xs font-black uppercase text-gray-600">Dad Status: On Site</span>
-                  </div>
-              </div>
-           </div>
-        )}
-
-        {activeTab === 'diaries' && !openDiary && (
-             <div className="max-w-4xl mx-auto space-y-6">
-               <h2 className="text-3xl font-black italic tracking-tighter">Secure Logs</h2>
-               <div className="grid grid-cols-2 gap-4">
-                 {['Medication Log', 'Personal Thoughts', 'Staff Log', 'Family Memories'].map(book => (
-                   <button key={book} onClick={() => setOpenDiary({title: book})} className="bg-white aspect-square rounded-[35px] p-6 shadow-sm border flex flex-col justify-end text-left active:scale-95 transition-transform">
-                     <Book className="text-red-500 mb-2" size={28} />
-                     <h3 className="font-black text-sm text-gray-800">{book}</h3>
-                   </button>
-                 ))}
-               </div>
-             </div>
-        )}
-
-        {activeTab === 'plans' && (
-            <div className="flex flex-col items-center justify-center h-[50vh] text-center space-y-4">
-                <Calendar size={64} className="text-gray-200" />
-                <h3 className="text-xl font-black italic text-gray-400">Calendar Syncing...</h3>
-                <p className="text-xs font-bold text-gray-300">Checking Google Calendar</p>
-            </div>
-        )}
-        {activeTab === 'memories' && (
-            <div className="flex flex-col items-center justify-center h-[50vh] text-center space-y-4">
-                <Camera size={64} className="text-gray-200" />
-                <h3 className="text-xl font-black italic text-gray-400">Family Gallery</h3>
-                <button onClick={toggleLens} className="bg-black text-white px-6 py-3 rounded-full text-xs font-black uppercase flex items-center gap-2">
-                    <Scan size={16}/> Open Rosie Lens
-                </button>
-            </div>
-        )}
-
-        {openDiary && (
-          <div className="max-w-2xl mx-auto space-y-4">
-            <button onClick={() => setOpenDiary(null)} className="flex items-center gap-2 text-red-500 font-black text-xs uppercase"><ArrowLeft size={16}/> Back</button>
-            <div className="bg-white rounded-[40px] p-8 shadow-xl min-h-[50vh] border relative">
-              <div className="flex justify-between items-center border-b pb-4 mb-4">
-                 <h2 className="text-xl font-black italic">{openDiary.title}</h2>
-                 <Pill className="text-blue-500" />
-              </div>
-              <div className="absolute bottom-6 left-6 right-6 flex gap-2">
-                <input className="flex-1 bg-gray-50 p-4 rounded-3xl outline-none font-bold text-sm" placeholder="Log entry..." />
-                <button onClick={() => handleSend(`Log to ${openDiary.title}`)} className="bg-red-500 text-white p-4 rounded-3xl"><PenLine size={20}/></button>
-              </div>
+            <div className="fixed bottom-32 left-6 right-6 flex items-center gap-2 bg-white p-2 rounded-full shadow-2xl border">
+              <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} className="flex-1 px-6 outline-none font-bold" placeholder="Type or say 'Rosie'..." />
+              <button onClick={() => handleSend()} className="bg-orange-500 text-white p-4 rounded-full"><Send size={20}/></button>
             </div>
           </div>
         )}
       </main>
 
-      <div className="fixed bottom-0 w-full p-6 z-50 flex justify-center">
-        <div className="bg-white/95 backdrop-blur-xl border border-white/50 rounded-[55px] shadow-[0_10px_40px_rgba(0,0,0,0.1)] p-2 flex justify-between items-center w-full max-w-sm">
+      {/* FOOTER NAV */}
+      <nav className="fixed bottom-0 w-full p-6 z-50 flex justify-center">
+        <div className="bg-white/95 backdrop-blur-xl border border-white/50 rounded-[55px] shadow-2xl p-2 flex justify-between items-center w-full max-w-sm">
           {[ 
-            {id:'brain', icon:MessageCircle, label: 'Chat'}, {id:'hub', icon:Grid, label: 'Hub'}, {id:'map', icon:MapUI, label: 'Map'}, 
-            {id:'plans', icon:Calendar, label: 'Plan'}, {id:'memories', icon:Camera, label: 'Pics'}, {id:'diaries', icon:Book, label: 'Log'} 
+            {id:'brain', icon:MessageCircle, label: 'CHAT'}, {id:'hub', icon:Radio, label: 'RADIO'}, 
+            {id:'map', icon:MapPin, label: 'MAP'} 
           ].map(({id, icon:Icon, label}) => (
-            <button key={id} onClick={() => {setActiveTab(id); setKitchenMode(null); setOpenDiary(null); setSelectedMember(null);}} className={`flex flex-col items-center justify-center w-full py-3 rounded-[35px] transition-all duration-300 ${activeTab === id ? 'bg-red-50 -translate-y-4 shadow-xl' : 'active:scale-95'}`}>
-              <Icon size={20} className={activeTab === id ? 'text-red-500' : 'text-gray-300'} strokeWidth={2.5} />
-              <span className={`text-[8px] font-black uppercase mt-1 tracking-tighter ${activeTab === id ? 'text-red-500' : 'text-gray-400'}`}>{label}</span>
+            <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-col items-center justify-center w-full py-3 rounded-[35px] transition-all ${activeTab === id ? 'bg-orange-50' : ''}`}>
+              <Icon size={20} className={activeTab === id ? 'text-orange-500' : 'text-gray-300'} />
+              <span className={`text-[8px] font-black mt-1 ${activeTab === id ? 'text-orange-500' : 'text-gray-300'}`}>{label}</span>
             </button>
           ))}
         </div>
-      </div>
+      </nav>
     </div>
   );
 }
+
+// Custom Zap icon for UI
+const Zap = ({className}) => (
+  <svg className={className} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+);
