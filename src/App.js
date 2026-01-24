@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInAnonymously } from "firebase/auth";
 import {
@@ -10,8 +10,6 @@ import {
   arrayUnion,
   arrayRemove
 } from "firebase/firestore";
-
-import { gcsSearch, gcsEnabled, computeBenchmarkFromResults } from "./services/gcsSearch";
 
 /* ---------------------------
    Firebase config (yours)
@@ -30,7 +28,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 /* ---------------------------
-   Icons (no external libs)
+   Utilities
 ---------------------------- */
 const Icon = ({ glyph, label }) => (
   <span aria-label={label} title={label} style={{ fontSize: 18, lineHeight: 1 }}>
@@ -46,10 +44,22 @@ function safeOpen(url) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-function buildRetailerSearchLinks(item) {
+function waLink(e164, text) {
+  return `https://wa.me/${e164}?text=${encodeURIComponent(text)}`;
+}
+
+/* ---------------------------
+   Smart Search (FREE)
+   - Generates store search links
+   - No APIs, no scraping
+---------------------------- */
+function buildSmartSearchLinks(item) {
   const q = encodeURIComponent(item);
+
+  // Prefer store in-site searches where possible,
+  // otherwise use Google site queries (reliable, free, no key).
   return [
-    { name: "Google", url: `https://www.google.com/search?q=${q}+price+South+Africa` },
+    { name: "Best Web Search", url: `https://www.google.com/search?q=${q}+price+South+Africa` },
     { name: "Checkers", url: `https://www.google.com/search?q=${q}+site:checkers.co.za` },
     { name: "Pick n Pay", url: `https://www.google.com/search?q=${q}+site:pnp.co.za` },
     { name: "Woolworths", url: `https://www.google.com/search?q=${q}+site:woolworths.co.za` },
@@ -59,7 +69,8 @@ function buildRetailerSearchLinks(item) {
 }
 
 /* ---------------------------
-   TheMealDB (free recipes)
+   Recipes (FREE)
+   TheMealDB: open/free recipe DB
 ---------------------------- */
 async function fetchMealDbSearch(query) {
   const url = `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(query)}`;
@@ -76,23 +87,30 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState("BRAIN");
 
-  // Kitchen Firestore
+  // Kitchen
   const [shopping, setShopping] = useState([]);
   const [kitchenBooted, setKitchenBooted] = useState(false);
 
-  // AI Search Benchmark results (local UI state)
-  // map: itemName -> {loading, benchmark, results, error}
-  const [aiPriceResults, setAiPriceResults] = useState({});
-  const [aiBatchLoading, setAiBatchLoading] = useState(false);
+  // People (Family + Staff)
+  const PEOPLE = useMemo(() => ([
+    { id: "nasima", name: "Nasima", role: "Family Admin", type: "adult" },
+    { id: "suhayl", name: "Suhayl", role: "Family Admin", type: "adult" },
 
-  // Staff
-  const STAFF = useMemo(() => ([
-    { id: "jabu", name: "Jabu", role: "Housekeeping", whatsapp: "27798024735" },
-    { id: "lisa", name: "Lisa", role: "Home Maintenance", whatsapp: "27635650731" }
+    { id: "rayhaan", name: "Rayhaan", role: "Child", type: "child" },
+    { id: "zaara", name: "Zaara", role: "Child", type: "child" },
+
+    { id: "jabu", name: "Jabu", role: "Housekeeper", type: "staff", whatsapp: "27798024735" },
+    { id: "lisa", name: "Lisa", role: "Home Maintenance", type: "staff", whatsapp: "27635650731" }
   ]), []);
 
-  const [tasks, setTasks] = useState({ jabu: [], lisa: [] });
-  const [activeStaff, setActiveStaff] = useState(null);
+  const FAMILY = useMemo(() => PEOPLE.filter(p => p.type !== "staff"), [PEOPLE]);
+  const STAFF = useMemo(() => PEOPLE.filter(p => p.type === "staff"), [PEOPLE]);
+
+  const [activePerson, setActivePerson] = useState(null);
+  const [tasks, setTasks] = useState({}); // personId -> items[]
+
+  // SMART SEARCH state (local)
+  const [smartSelectedItem, setSmartSelectedItem] = useState(null);
 
   /* Boot */
   useEffect(() => {
@@ -100,11 +118,12 @@ export default function App() {
       try {
         await signInAnonymously(auth);
 
-        await setDoc(doc(db, "rosie", "state"), { bootedAt: Date.now(), v: "31.6.2" }, { merge: true });
+        await setDoc(doc(db, "rosie", "state"), { bootedAt: Date.now(), v: "31.7.0" }, { merge: true });
         await setDoc(doc(db, "rosie", "kitchen"), { shopping: [] }, { merge: true });
 
-        for (const s of STAFF) {
-          await setDoc(doc(db, "rosie", "tasks", "people", s.id), { items: [] }, { merge: true });
+        // Ensure task docs exist for all people
+        for (const p of PEOPLE) {
+          await setDoc(doc(db, "rosie", "tasks", "people", p.id), { items: [] }, { merge: true });
         }
 
         setReady(true);
@@ -113,7 +132,7 @@ export default function App() {
         setReady(true);
       }
     })();
-  }, [STAFF]);
+  }, [PEOPLE]);
 
   /* Listeners */
   useEffect(() => {
@@ -125,12 +144,12 @@ export default function App() {
       setKitchenBooted(true);
     });
 
-    const unsubs = STAFF.map((s) =>
-      onSnapshot(doc(db, "rosie", "tasks", "people", s.id), (snap) => {
+    const unsubs = PEOPLE.map((p) =>
+      onSnapshot(doc(db, "rosie", "tasks", "people", p.id), (snap) => {
         const d = snap.exists() ? snap.data() : {};
         setTasks((prev) => ({
           ...prev,
-          [s.id]: Array.isArray(d.items) ? d.items : []
+          [p.id]: Array.isArray(d.items) ? d.items : []
         }));
       })
     );
@@ -139,25 +158,25 @@ export default function App() {
       unsubKitchen();
       unsubs.forEach((u) => u && u());
     };
-  }, [ready, STAFF]);
+  }, [ready, PEOPLE]);
 
-  /* Staff helpers */
-  const addTask = useCallback(async (staffId, title) => {
+  /* Task helpers */
+  const addTask = useCallback(async (personId, title) => {
     if (!title || !title.trim()) return;
-    const ref = doc(db, "rosie", "tasks", "people", staffId);
+    const ref = doc(db, "rosie", "tasks", "people", personId);
     const t = { id: nowId(), title: title.trim(), completed: false, createdAt: Date.now() };
     await setDoc(ref, { items: arrayUnion(t) }, { merge: true });
   }, []);
 
-  const toggleTask = useCallback(async (staffId, task) => {
-    const ref = doc(db, "rosie", "tasks", "people", staffId);
+  const toggleTask = useCallback(async (personId, task) => {
+    const ref = doc(db, "rosie", "tasks", "people", personId);
     const updated = { ...task, completed: !task.completed, completedAt: !task.completed ? Date.now() : null };
     await updateDoc(ref, { items: arrayRemove(task) });
     await updateDoc(ref, { items: arrayUnion(updated) });
   }, []);
 
-  const deleteTask = useCallback(async (staffId, task) => {
-    const ref = doc(db, "rosie", "tasks", "people", staffId);
+  const deleteTask = useCallback(async (personId, task) => {
+    const ref = doc(db, "rosie", "tasks", "people", personId);
     await updateDoc(ref, { items: arrayRemove(task) });
   }, []);
 
@@ -171,7 +190,7 @@ export default function App() {
       ``,
       `Please reply “Done” when completed. Thanks.`
     ];
-    safeOpen(`https://wa.me/${staff.whatsapp}?text=${encodeURIComponent(lines.join("\n"))}`);
+    safeOpen(waLink(staff.whatsapp, lines.join("\n")));
   }, [tasks]);
 
   /* Kitchen helpers */
@@ -188,69 +207,15 @@ export default function App() {
   }, []);
 
   /* ---------------------------
-     AI Search benchmark price fetch
-     (Google Custom Search)
+     UI Components
   ---------------------------- */
-  const aiFetchForItem = useCallback(async (itemName) => {
-    const name = (itemName || "").trim();
-    if (!name) return;
-
-    setAiPriceResults((prev) => ({
-      ...prev,
-      [name]: { loading: true, benchmark: null, results: [], error: "" }
-    }));
-
-    try {
-      const query = `${name} price South Africa`;
-      const resp = await gcsSearch(query, { num: 5 });
-
-      if (!resp.ok) {
-        const msg =
-          resp.reason === "NO_KEY"
-            ? "AI Search is not enabled. Add REACT_APP_GCS_KEY and REACT_APP_GCS_CX in Vercel."
-            : `AI Search failed (${resp.reason}).`;
-
-        setAiPriceResults((prev) => ({
-          ...prev,
-          [name]: { loading: false, benchmark: null, results: [], error: msg }
-        }));
-        return;
-      }
-
-      const benchmark = computeBenchmarkFromResults(resp.results);
-
-      setAiPriceResults((prev) => ({
-        ...prev,
-        [name]: { loading: false, benchmark, results: resp.results, error: "" }
-      }));
-    } catch (e) {
-      setAiPriceResults((prev) => ({
-        ...prev,
-        [name]: { loading: false, benchmark: null, results: [], error: e?.message || "AI Search failed." }
-      }));
-    }
-  }, []);
-
-  const aiFetchAll = useCallback(async () => {
-    if (!shopping.length) return;
-    setAiBatchLoading(true);
-    try {
-      for (const it of shopping) {
-        await aiFetchForItem(it.name);
-      }
-    } finally {
-      setAiBatchLoading(false);
-    }
-  }, [shopping, aiFetchForItem]);
-
-  /* UI */
   const TopBar = () => (
-    <div style={{ padding: "18px 16px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <div style={{ padding: "16px 16px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/rosie.svg" alt="Rosie" style={{ width: 44, height: 44 }} />
         <div>
-          <div style={{ fontWeight: 900, fontSize: 16, margin: 0 }}>Rosie PA</div>
-          <div className="small">V31.6.2 DOWNLOAD</div>
+          <div style={{ fontWeight: 1000, fontSize: 16, margin: 0 }}>Rosie PA</div>
+          <div className="small">V31.7.0 — Smart Search + Family</div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", opacity: 0.9 }}>
@@ -262,36 +227,43 @@ export default function App() {
 
   const Brain = () => (
     <div className="page">
-      <div style={{ textAlign: "center", paddingTop: 6 }}>
+      <div className="center" style={{ paddingTop: 4 }}>
         <img src="/rosie.svg" alt="Rosie" className="rosie-mascot" />
-        <div style={{ fontWeight: 900, fontSize: 34, margin: "8px 0 4px" }}>Hi! I’m Rosie</div>
-        <div className="small" style={{ fontSize: 14, marginBottom: 16 }}>
-          Shopping list + AI price benchmark + recipes + staff tasks.
-        </div>
+        <div className="hi">Hi! I’m Rosie</div>
+        <div className="sub">Family tasks, staff tasks, shopping, smart search, and recipes.</div>
       </div>
 
       <div style={{ display: "grid", gap: 12 }}>
-        <button className="card" onClick={() => setTab("KITCHEN")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="🍽️" label="Kitchen" /><b>Kitchen OS</b>
-            </div>
-            <span className="small">AI Search Benchmark + Links</span>
-          </div>
-          <div className="small" style={{ marginTop: 8 }}>
-            Uses search API results (no scraping) to estimate a benchmark range.
-          </div>
-        </button>
-
         <button className="card" onClick={() => setTab("HUB")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="👥" label="Staff" /><b>Staff Tasks</b>
+              <Icon glyph="👨‍👩‍👧‍👦" label="Family" /><b style={{ fontWeight: 1000 }}>Family & Staff Hub</b>
             </div>
-            <span className="small">Jabu + Lisa</span>
+            <span className="small">Kids + employees</span>
           </div>
           <div className="small" style={{ marginTop: 8 }}>
-            Assign tasks and send WhatsApp To-Do lists.
+            Manage tasks for Rayhaan, Zaara, Jabu, and Lisa.
+          </div>
+        </button>
+
+        <button className="card" onClick={() => setTab("KITCHEN")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon glyph="🍽️" label="Kitchen" /><b style={{ fontWeight: 1000 }}>Kitchen OS</b>
+            </div>
+            <span className="small">Shopping + Smart Search</span>
+          </div>
+          <div className="small" style={{ marginTop: 8 }}>
+            Add groceries, then open smart store searches instantly.
+          </div>
+        </button>
+
+        <button className="card" onClick={() => setTab("SETUP")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon glyph="⚙️" label="Setup" /><b style={{ fontWeight: 1000 }}>Setup</b>
+            </div>
+            <span className="small">Version info</span>
           </div>
         </button>
       </div>
@@ -299,114 +271,200 @@ export default function App() {
   );
 
   const Hub = () => {
-    if (!activeStaff) {
+    if (!activePerson) {
       return (
         <div className="page">
           <div className="card">
-            <div style={{ fontWeight: 900, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="👥" label="Staff" /> Staff & To-Do
+            <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon glyph="👨‍👩‍👧‍👦" label="Hub" /> Family & Staff Hub
             </div>
-            <div className="small" style={{ marginTop: 6 }}>Tap a person to manage their list.</div>
+            <div className="small" style={{ marginTop: 6 }}>
+              Tap a person to manage their tasks.
+            </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-            {STAFF.map(s => (
-              <button
-                key={s.id}
-                className="card"
-                style={{ border: "none", textAlign: "left", cursor: "pointer" }}
-                onClick={() => setActiveStaff(s)}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <img src="/rosie.svg" alt="Rosie" style={{ width: 30, height: 30 }} />
-                  <div>
-                    <div style={{ fontWeight: 900 }}>{s.name}</div>
-                    <div className="small">{s.role}</div>
+          <div className="card" style={{ marginTop: 12 }}>
+            <div className="card-title">Family</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {FAMILY.map(p => (
+                <button
+                  key={p.id}
+                  className="btn-soft"
+                  style={{ textAlign: "left", padding: 14 }}
+                  onClick={() => setActivePerson(p)}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <img src="/rosie.svg" alt="Rosie" style={{ width: 28, height: 28 }} />
+                    <div>
+                      <div style={{ fontWeight: 1000 }}>{p.name}</div>
+                      <div className="small">{p.role}</div>
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop: 12 }}>
+            <div className="card-title">Staff</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {STAFF.map(s => (
+                <button
+                  key={s.id}
+                  className="btn-soft"
+                  style={{ textAlign: "left", padding: 14 }}
+                  onClick={() => setActivePerson(s)}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <img src="/rosie.svg" alt="Rosie" style={{ width: 28, height: 28 }} />
+                    <div>
+                      <div style={{ fontWeight: 1000 }}>{s.name}</div>
+                      <div className="small">{s.role}</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       );
     }
 
-    return <StaffDetail staff={activeStaff} onBack={() => setActiveStaff(null)} />;
+    return <PersonDetail person={activePerson} onBack={() => setActivePerson(null)} />;
   };
 
-  const StaffDetail = ({ staff, onBack }) => {
+  const PersonDetail = ({ person, onBack }) => {
     const [newTask, setNewTask] = useState("");
-    const list = tasks[staff.id] || [];
+    const list = tasks[person.id] || [];
+    const open = list.filter(t => !t.completed);
+    const done = list.filter(t => t.completed);
+
+    const canWhatsApp = person.type === "staff" && person.whatsapp;
 
     return (
       <div className="page">
-        <button className="btn-soft" onClick={onBack}><Icon glyph="←" label="Back" /> Back</button>
+        <button className="btn-soft" onClick={onBack}>
+          <Icon glyph="←" label="Back" /> Back
+        </button>
 
         <div className="card" style={{ marginTop: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontWeight: 900, fontSize: 18 }}>{staff.name}</div>
-              <div className="small">{staff.role}</div>
+              <div style={{ fontWeight: 1000, fontSize: 18 }}>{person.name}</div>
+              <div className="small">{person.role}</div>
             </div>
-            <button className="btn" onClick={() => sendTasksToWhatsApp(staff)}>
-              <Icon glyph="💬" label="WhatsApp" /> Send WhatsApp
-            </button>
+
+            {canWhatsApp && (
+              <button className="btn" onClick={() => sendTasksToWhatsApp(person)}>
+                <Icon glyph="💬" label="WhatsApp" /> Send WhatsApp
+              </button>
+            )}
           </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
-            <input className="input" value={newTask} onChange={(e) => setNewTask(e.target.value)} placeholder="Add task..." />
-            <button className="btn" onClick={async () => { await addTask(staff.id, newTask); setNewTask(""); }}>
+            <input
+              className="input"
+              value={newTask}
+              onChange={(e) => setNewTask(e.target.value)}
+              placeholder={`Add task for ${person.name}...`}
+            />
+            <button
+              className="btn"
+              onClick={async () => {
+                await addTask(person.id, newTask);
+                setNewTask("");
+              }}
+            >
               <Icon glyph="＋" label="Add" />
             </button>
           </div>
+
+          <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div className="small"><b style={{ fontWeight: 1000 }}>Open:</b> {open.length}</div>
+            <div className="small"><b style={{ fontWeight: 1000 }}>Done:</b> {done.length}</div>
+          </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          {list.length === 0 && <div className="card"><div className="small">No tasks yet.</div></div>}
-          {list.map(t => (
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          {list.length === 0 && (
+            <div className="card">
+              <div className="small">No tasks yet.</div>
+            </div>
+          )}
+
+          {open.map(t => (
             <div key={t.id} className="list-item">
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <button className="btn-soft" onClick={() => toggleTask(staff.id, t)}>
-                  {t.completed ? <Icon glyph="✅" label="Done" /> : <Icon glyph="❤️" label="Open" />}
+                <button className="btn-soft" onClick={() => toggleTask(person.id, t)}>
+                  <Icon glyph="❤️" label="Open" />
                 </button>
-                <div style={{ fontWeight: 900, textDecoration: t.completed ? "line-through" : "none", opacity: t.completed ? 0.65 : 1 }}>
-                  {t.title}
-                </div>
+                <div style={{ fontWeight: 1000 }}>{t.title}</div>
               </div>
-              <button className="btn-soft" onClick={() => deleteTask(staff.id, t)}>
-                <Icon glyph="🗑️" label="Delete" />
-              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn-soft" onClick={() => deleteTask(person.id, t)}>
+                  <Icon glyph="🗑️" label="Delete" />
+                </button>
+                <button className="btn-soft" onClick={() => toggleTask(person.id, t)}>
+                  <Icon glyph="✅" label="Done" />
+                </button>
+              </div>
             </div>
           ))}
+
+          {done.length > 0 && (
+            <div className="card">
+              <div className="card-title">Completed</div>
+              <div style={{ display: "grid", gap: 10 }}>
+                {done.map(t => (
+                  <div key={t.id} className="list-item" style={{ opacity: 0.75 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <button className="btn-soft" onClick={() => toggleTask(person.id, t)}>
+                        <Icon glyph="✅" label="Done" />
+                      </button>
+                      <div style={{ fontWeight: 1000, textDecoration: "line-through" }}>{t.title}</div>
+                    </div>
+                    <button className="btn-soft" onClick={() => deleteTask(person.id, t)}>
+                      <Icon glyph="🗑️" label="Delete" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
   };
 
   const Kitchen = () => {
-    const [view, setView] = useState("menu");
+    const [view, setView] = useState("shopping");
+
     return (
       <div className="page">
-        <button className="btn-soft" onClick={() => setTab("BRAIN")}><Icon glyph="←" label="Back" /> Back</button>
-
-        <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 900, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="card">
+          <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
             <Icon glyph="🍽️" label="Kitchen" /> Kitchen OS
           </div>
           <div className="small" style={{ marginTop: 6 }}>
-            Shopping list sync + AI Search benchmark + recipe finder.
+            Shopping list + Smart Search + Recipe Finder (fully free).
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <button className="btn" onClick={() => setView("shopping")}><Icon glyph="🛒" label="Shopping" /> Shopping List</button>
-            <button className="btn" onClick={() => setView("aiPrices")}><Icon glyph="🧠" label="AI Price" /> AI Search Price Check</button>
-            <button className="btn" onClick={() => setView("recipes")}><Icon glyph="🍰" label="Recipes" /> Recipe Finder</button>
+            <button className="btn" onClick={() => setView("shopping")}>
+              <Icon glyph="🛒" label="Shopping" /> Shopping List
+            </button>
+            <button className="btn" onClick={() => setView("smartsearch")}>
+              <Icon glyph="🔎" label="Smart Search" /> Smart Search (Prices & Links)
+            </button>
+            <button className="btn" onClick={() => setView("recipes")}>
+              <Icon glyph="🍰" label="Recipes" /> Recipe Finder
+            </button>
           </div>
         </div>
 
         <div style={{ marginTop: 12 }}>
           {view === "shopping" && <ShoppingList />}
-          {view === "aiPrices" && <AiPriceCheck />}
+          {view === "smartsearch" && <SmartSearch />}
           {view === "recipes" && <RecipeFinder />}
         </div>
       </div>
@@ -423,7 +481,7 @@ export default function App() {
 
     return (
       <div className="card">
-        <div style={{ fontWeight: 900, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ fontWeight: 1000, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
           <Icon glyph="🛒" label="Shopping" /> Shopping List
         </div>
 
@@ -435,11 +493,13 @@ export default function App() {
           </button>
         </div>
 
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           {shopping.length === 0 && <div className="small">No grocery items yet.</div>}
           {shopping.map(it => (
             <div key={it.id} className="list-item">
-              <div>{it.name} <span className="small">x{it.qty}</span></div>
+              <div style={{ fontWeight: 1000 }}>
+                {it.name} <span className="small">x{it.qty}</span>
+              </div>
               <button className="btn-soft" onClick={() => removeShoppingItem(it)}>
                 <Icon glyph="🗑️" label="Remove" />
               </button>
@@ -450,151 +510,78 @@ export default function App() {
     );
   };
 
-  const AiPriceCheck = () => {
-    const [selected, setSelected] = useState(null);
-
+  const SmartSearch = () => {
     return (
       <div className="card">
-        <div style={{ fontWeight: 900, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
-          <Icon glyph="🧠" label="AI Search" /> AI Search Engine Check (Benchmark)
+        <div style={{ fontWeight: 1000, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
+          <Icon glyph="🔎" label="Smart Search" /> Smart Search (Free)
         </div>
 
-        <div className="small" style={{ marginTop: 6 }}>
-          Rosie queries a search API, extracts visible Rand prices from snippets (if present), and shows a benchmark range plus top links.
+        <div className="small" style={{ marginTop: 8 }}>
+          Rosie generates the best store search links for each item. No paid services, no keys.
         </div>
-
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="btn" onClick={aiFetchAll} disabled={aiBatchLoading || !shopping.length}>
-            <Icon glyph="⚡" label="Batch" /> {aiBatchLoading ? "Checking…" : "Check All Items"}
-          </button>
-          <button className="btn-soft" onClick={() => setSelected(null)}>
-            <Icon glyph="🧼" label="Clear" /> Clear
-          </button>
-        </div>
-
-        {!gcsEnabled() && (
-          <div className="card" style={{ marginTop: 12 }}>
-            <div style={{ fontWeight: 900 }}>AI Search is not enabled</div>
-            <div className="small" style={{ marginTop: 6 }}>
-              Add these in Vercel Environment Variables:
-              <div className="small" style={{ marginTop: 6 }}>
-                <b>REACT_APP_GCS_KEY</b> and <b>REACT_APP_GCS_CX</b>
-              </div>
-              You still have store links even without AI Search.
-            </div>
-          </div>
-        )}
 
         <div style={{ marginTop: 12 }}>
-          {shopping.length === 0 && <div className="small">Add groceries first.</div>}
+          {shopping.length === 0 && <div className="small">Add groceries first, then return here.</div>}
 
-          {shopping.map(it => {
-            const name = it.name;
-            const pr = aiPriceResults[name] || null;
-
-            return (
-              <button
-                key={it.id}
-                className="list-item"
-                style={{ width: "100%", border: "none", cursor: "pointer", textAlign: "left" }}
-                onClick={() => setSelected(name)}
-              >
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {shopping.length > 0 && (
+            <div style={{ display: "grid", gap: 10 }}>
+              {shopping.map(it => (
+                <button
+                  key={it.id}
+                  className="list-item"
+                  style={{ border: "none", cursor: "pointer", textAlign: "left" }}
+                  onClick={() => setSmartSelectedItem(it.name)}
+                >
                   <div>
-                    {name} <span className="small">x{it.qty}</span>
+                    {it.name} <span className="small">x{it.qty}</span>
                   </div>
-
-                  {pr?.loading && <span className="small">AI checking…</span>}
-
-                  {!pr?.loading && pr?.benchmark && (
-                    <span className="small">
-                      Benchmark: <b>R {pr.benchmark.min.toFixed(2)} – R {pr.benchmark.max.toFixed(2)}</b> • {pr.benchmark.sampleCount} price hits
-                    </span>
-                  )}
-
-                  {!pr?.loading && pr?.error && (
-                    <span className="small" style={{ color: "#b91c1c" }}>{pr.error}</span>
-                  )}
-
-                  {!pr?.loading && !pr?.benchmark && pr?.results?.length > 0 && (
-                    <span className="small">
-                      No Rand price in snippets — links ready.
-                    </span>
-                  )}
-                </div>
-
-                <Icon glyph="→" label="Details" />
-              </button>
-            );
-          })}
+                  <Icon glyph="→" label="Open" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {selected && (
+        {smartSelectedItem && (
           <div style={{ marginTop: 12 }} className="card">
-            <div style={{ fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="🔎" label="Selected" /> {selected}
+            <div style={{ fontWeight: 1000, display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon glyph="🧠" label="Selected" /> {smartSelectedItem}
+            </div>
+
+            <div className="small" style={{ marginTop: 8 }}>
+              Tap a store to search for the best price.
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              {buildSmartSearchLinks(smartSelectedItem).map((l) => (
+                <button
+                  key={l.name}
+                  className="btn-soft"
+                  onClick={() => safeOpen(l.url)}
+                  style={{ textAlign: "left" }}
+                >
+                  <div style={{ fontWeight: 1000 }}>{l.name}</div>
+                  <div className="small" style={{ marginTop: 4, wordBreak: "break-word" }}>{l.url}</div>
+                </button>
+              ))}
             </div>
 
             <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="btn" onClick={() => aiFetchForItem(selected)}>
-                <Icon glyph="📡" label="Check" /> AI Check
+              <button className="btn-soft" onClick={() => setSmartSelectedItem(null)}>
+                <Icon glyph="🧼" label="Close" /> Close
               </button>
-              <button className="btn-soft" onClick={() => safeOpen(`https://www.google.com/search?q=${encodeURIComponent(selected + " price South Africa")}`)}>
-                <Icon glyph="🌍" label="Google" /> Open Google
+              <button
+                className="btn"
+                onClick={() => {
+                  const links = buildSmartSearchLinks(smartSelectedItem);
+                  // Open “best web” + 2 top stores (keeps it sane on mobile)
+                  links.slice(0, 3).forEach(l => safeOpen(l.url));
+                }}
+              >
+                <Icon glyph="⚡" label="Open" /> Quick Open (3)
               </button>
             </div>
-
-            {aiPriceResults[selected]?.benchmark && (
-              <div style={{ marginTop: 12 }} className="card">
-                <div style={{ fontWeight: 900 }}>Benchmark Range</div>
-                <div className="small" style={{ marginTop: 6 }}>
-                  <b>R {aiPriceResults[selected].benchmark.min.toFixed(2)} – R {aiPriceResults[selected].benchmark.max.toFixed(2)}</b>
-                  <span className="small"> • extracted from search snippets</span>
-                </div>
-              </div>
-            )}
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontWeight: 900 }}>Top Links (AI Search)</div>
-              <div className="small" style={{ marginTop: 6 }}>
-                Tap a result to open. If no API is configured, use Store Links below.
-              </div>
-
-              {(aiPriceResults[selected]?.results || []).length === 0 && (
-                <div className="small" style={{ marginTop: 10 }}>
-                  No AI results yet — run “AI Check”.
-                </div>
-              )}
-
-              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                {(aiPriceResults[selected]?.results || []).slice(0, 5).map((r, idx) => (
-                  <button
-                    key={`${r.link}_${idx}`}
-                    className="btn-soft"
-                    onClick={() => safeOpen(r.link)}
-                    style={{ textAlign: "left" }}
-                  >
-                    <div style={{ fontWeight: 900 }}>{r.title}</div>
-                    <div className="small">{r.displayLink || ""}</div>
-                    <div className="small" style={{ marginTop: 6 }}>{r.snippet}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontWeight: 900 }}>Store Links</div>
-              <div className="small" style={{ marginTop: 6 }}>Tap a store to search for this item.</div>
-              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                {buildRetailerSearchLinks(selected).map((l) => (
-                  <button key={l.name} className="btn-soft" onClick={() => safeOpen(l.url)} style={{ textAlign: "left" }}>
-                    <b>{l.name}</b>
-                    <div className="small" style={{ marginTop: 4, wordBreak: "break-word" }}>{l.url}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
           </div>
         )}
       </div>
@@ -623,32 +610,37 @@ export default function App() {
     };
 
     const openTrending = (topic) => {
-      const base = `${topic} recipe`;
-      safeOpen(`https://www.google.com/search?q=${encodeURIComponent(`best ${base}`)}`);
-      safeOpen(`https://www.youtube.com/results?search_query=${encodeURIComponent(`viral ${base}`)}`);
-      safeOpen(`https://www.tiktok.com/search?q=${encodeURIComponent(`viral ${base}`)}`);
-      safeOpen(`https://www.instagram.com/explore/tags/${encodeURIComponent(topic.replace(/\s+/g, ""))}/`);
+      const t = (topic || "recipe").trim();
+      safeOpen(`https://www.google.com/search?q=${encodeURIComponent(`best ${t} recipe`)}`);
+      safeOpen(`https://www.youtube.com/results?search_query=${encodeURIComponent(`viral ${t} recipe`)}`);
+      safeOpen(`https://www.tiktok.com/search?q=${encodeURIComponent(`viral ${t} recipe`)}`);
     };
 
     return (
       <div className="card">
-        <div style={{ fontWeight: 900, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ fontWeight: 1000, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
           <Icon glyph="🍰" label="Recipes" /> Recipe Finder
         </div>
 
-        <div className="small" style={{ marginTop: 6 }}>
-          Find recipes plus trending/viral search buttons (no scraping required).
+        <div className="small" style={{ marginTop: 8 }}>
+          Search recipes + open trending/viral searches instantly (fully free).
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. Brownies / Kids pasta / Chicken curry" />
+          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. brownies / kids pasta / chicken curry" />
           <button className="btn" onClick={search}><Icon glyph="🔎" label="Search" /></button>
         </div>
 
         <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="btn-soft" onClick={() => openTrending(q || "dessert")}><Icon glyph="🔥" label="Trending" /> Trending/Viral</button>
-          <button className="btn-soft" onClick={() => openTrending("kids meals")}><Icon glyph="🧒" label="Kids" /> Kids Meals</button>
-          <button className="btn-soft" onClick={() => openTrending("dessert")}><Icon glyph="🍫" label="Dessert" /> Desserts</button>
+          <button className="btn-soft" onClick={() => openTrending(q || "dessert")}>
+            <Icon glyph="🔥" label="Trending" /> Trending/Viral
+          </button>
+          <button className="btn-soft" onClick={() => openTrending("kids meals")}>
+            <Icon glyph="🧒" label="Kids" /> Kids Meals
+          </button>
+          <button className="btn-soft" onClick={() => openTrending("desserts")}>
+            <Icon glyph="🍫" label="Dessert" /> Desserts
+          </button>
         </div>
 
         {loading && <div className="small" style={{ marginTop: 12 }}>Searching recipes…</div>}
@@ -671,7 +663,7 @@ export default function App() {
                 )}
 
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 900, fontSize: 16 }}>{m.strMeal}</div>
+                  <div style={{ fontWeight: 1000, fontSize: 16 }}>{m.strMeal}</div>
                   <div className="small">
                     {m.strArea ? `${m.strArea} • ` : ""}{m.strCategory || "Recipe"}
                   </div>
@@ -707,17 +699,20 @@ export default function App() {
   const Setup = () => (
     <div className="page">
       <div className="card">
-        <div style={{ fontWeight: 900, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
           <Icon glyph="⚙️" label="Setup" /> Setup
         </div>
-        <div className="small" style={{ marginTop: 8 }}>
-          Rosie PA — <b>V31.6.2 DOWNLOAD</b>
+
+        <div className="small" style={{ marginTop: 10 }}>
+          Rosie PA Version: <b style={{ fontWeight: 1000 }}>31.7.0</b>
         </div>
-        <div className="small" style={{ marginTop: 8 }}>
-          AI Search Benchmark: {gcsEnabled() ? <b>Enabled</b> : <b>Not enabled</b>}
+
+        <div className="small" style={{ marginTop: 10 }}>
+          Smart Search mode is fully free (no APIs).
         </div>
-        <div className="small" style={{ marginTop: 8 }}>
-          If disabled: set <b>REACT_APP_GCS_KEY</b> and <b>REACT_APP_GCS_CX</b> in Vercel.
+
+        <div className="small" style={{ marginTop: 10 }}>
+          Firestore is live for: Shopping list + Tasks (Family & Staff).
         </div>
       </div>
     </div>
@@ -728,11 +723,12 @@ export default function App() {
       return (
         <div className="page" style={{ textAlign: "center", paddingTop: 60 }}>
           <img src="/rosie.svg" alt="Rosie" style={{ width: 120, height: 120 }} />
-          <div style={{ fontWeight: 900, fontSize: 28, marginTop: 10 }}>Booting Rosie…</div>
+          <div style={{ fontWeight: 1000, fontSize: 28, marginTop: 10 }}>Booting Rosie…</div>
           <div className="small" style={{ marginTop: 8 }}>Signing in & syncing Firestore.</div>
         </div>
       );
     }
+
     if (tab === "BRAIN") return <Brain />;
     if (tab === "KITCHEN") return <Kitchen />;
     if (tab === "HUB") return <Hub />;
@@ -740,27 +736,32 @@ export default function App() {
   };
 
   return (
-    <div>
+    <div className="app-root">
       <TopBar />
       {render()}
 
-      <div className="bottom-nav">
-        <button className={`nav-btn ${tab === "BRAIN" ? "active" : ""}`} onClick={() => setTab("BRAIN")}>
-          <Icon glyph="🧠" label="Brain" />
-          <span className="small">Brain</span>
-        </button>
-        <button className={`nav-btn ${tab === "KITCHEN" ? "active" : ""}`} onClick={() => setTab("KITCHEN")}>
-          <Icon glyph="🍽️" label="Kitchen" />
-          <span className="small">Kitchen</span>
-        </button>
-        <button className={`nav-btn ${tab === "HUB" ? "active" : ""}`} onClick={() => setTab("HUB")}>
-          <Icon glyph="👥" label="Hub" />
-          <span className="small">Hub</span>
-        </button>
-        <button className={`nav-btn ${tab === "SETUP" ? "active" : ""}`} onClick={() => setTab("SETUP")}>
-          <Icon glyph="⚙️" label="Setup" />
-          <span className="small">Setup</span>
-        </button>
+      <div className="bottom-nav-wrap">
+        <div className="bottom-nav">
+          <button className={`nav-btn ${tab === "BRAIN" ? "active" : ""}`} onClick={() => { setTab("BRAIN"); setActivePerson(null); }}>
+            <Icon glyph="🧠" label="Brain" />
+            <span className="nav-label">Brain</span>
+          </button>
+
+          <button className={`nav-btn ${tab === "KITCHEN" ? "active" : ""}`} onClick={() => { setTab("KITCHEN"); setActivePerson(null); }}>
+            <Icon glyph="🍽️" label="Kitchen" />
+            <span className="nav-label">Kitchen</span>
+          </button>
+
+          <button className={`nav-btn ${tab === "HUB" ? "active" : ""}`} onClick={() => setTab("HUB")}>
+            <Icon glyph="👨‍👩‍👧‍👦" label="Hub" />
+            <span className="nav-label">Hub</span>
+          </button>
+
+          <button className={`nav-btn ${tab === "SETUP" ? "active" : ""}`} onClick={() => { setTab("SETUP"); setActivePerson(null); }}>
+            <Icon glyph="⚙️" label="Setup" />
+            <span className="nav-label">Setup</span>
+          </button>
+        </div>
       </div>
     </div>
   );
