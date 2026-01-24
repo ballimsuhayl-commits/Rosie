@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInAnonymously } from "firebase/auth";
 import {
@@ -28,7 +28,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 /* ---------------------------
-   Tiny icon helpers (no libs)
+   Icons (no external libs)
 ---------------------------- */
 const Icon = ({ glyph, label }) => (
   <span aria-label={label} title={label} style={{ fontSize: 18, lineHeight: 1 }}>
@@ -36,9 +36,6 @@ const Icon = ({ glyph, label }) => (
   </span>
 );
 
-/* ---------------------------
-   Helpers
----------------------------- */
 function nowId() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
@@ -49,22 +46,86 @@ function safeOpen(url) {
 
 function buildRetailerSearchLinks(item) {
   const q = encodeURIComponent(item);
-
-  // SA-friendly store searches (safe link outs, not scraping)
-  const links = [
+  return [
     { name: "Google", url: `https://www.google.com/search?q=${q}+price+South+Africa` },
-    { name: "Checkers Sixty60", url: `https://www.google.com/search?q=${q}+site:checkers.co.za+price` },
-    { name: "Pick n Pay", url: `https://www.google.com/search?q=${q}+site:pnp.co.za+price` },
-    { name: "Woolworths", url: `https://www.google.com/search?q=${q}+site:woolworths.co.za+price` },
-    { name: "SPAR", url: `https://www.google.com/search?q=${q}+site:spar.co.za+price` },
-    { name: "Makro", url: `https://www.google.com/search?q=${q}+site:makro.co.za+price` }
+    { name: "Checkers", url: `https://www.google.com/search?q=${q}+site:checkers.co.za` },
+    { name: "Pick n Pay", url: `https://www.google.com/search?q=${q}+site:pnp.co.za` },
+    { name: "Woolworths", url: `https://www.google.com/search?q=${q}+site:woolworths.co.za` },
+    { name: "SPAR", url: `https://www.google.com/search?q=${q}+site:spar.co.za` },
+    { name: "Makro", url: `https://www.google.com/search?q=${q}+site:makro.co.za` }
   ];
-
-  return links;
 }
 
+/* ---------------------------
+   LEGAL benchmark price fetch:
+   SerpApi (Google Shopping/Search)
+   Env var: REACT_APP_SERPAPI_KEY
+---------------------------- */
+const SERP_KEY = process.env.REACT_APP_SERPAPI_KEY || "";
+
+function parsePriceToNumber(text) {
+  if (!text) return null;
+  // examples: "R 29.99", "R29,99", "ZAR 29.99"
+  const cleaned = String(text)
+    .replace(/ZAR/gi, "")
+    .replace(/R/gi, "")
+    .replace(/\s+/g, "")
+    .replace(",", ".");
+  const m = cleaned.match(/(\d+(\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function fetchBenchmarkPriceSerpApi(query) {
+  if (!SERP_KEY) {
+    return { ok: false, reason: "NO_KEY", best: null, items: [] };
+  }
+
+  const q = `${query} price South Africa`;
+  // Try Google Shopping engine first (best for prices)
+  const shoppingUrl =
+    `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(q)}&hl=en&gl=za&api_key=${encodeURIComponent(SERP_KEY)}`;
+
+  const res = await fetch(shoppingUrl);
+  if (!res.ok) {
+    return { ok: false, reason: `HTTP_${res.status}`, best: null, items: [] };
+  }
+
+  const data = await res.json();
+  const results = Array.isArray(data?.shopping_results) ? data.shopping_results : [];
+
+  const items = results
+    .slice(0, 10)
+    .map((r) => {
+      const priceText = r?.price || r?.extracted_price || "";
+      const numeric = typeof r?.extracted_price === "number"
+        ? r.extracted_price
+        : parsePriceToNumber(priceText);
+
+      return {
+        title: r?.title || "Result",
+        source: r?.source || r?.seller || "Source",
+        link: r?.link || r?.product_link || "",
+        priceText: priceText ? String(priceText) : (numeric ? `R ${numeric.toFixed(2)}` : ""),
+        priceValue: numeric
+      };
+    })
+    .filter((x) => x.link);
+
+  // Choose cheapest numeric price as benchmark
+  const priced = items.filter((x) => typeof x.priceValue === "number" && Number.isFinite(x.priceValue));
+  priced.sort((a, b) => a.priceValue - b.priceValue);
+
+  const best = priced.length ? priced[0] : (items[0] || null);
+
+  return { ok: true, best, items };
+}
+
+/* ---------------------------
+   TheMealDB (free recipes)
+---------------------------- */
 async function fetchMealDbSearch(query) {
-  // TheMealDB is free and does not require keys.
   const url = `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(query)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("Recipe search failed.");
@@ -73,17 +134,22 @@ async function fetchMealDbSearch(query) {
 }
 
 /* ---------------------------
-   Main App
+   App
 ---------------------------- */
 export default function App() {
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState("BRAIN");
 
-  // Kitchen data (Firestore)
-  const [shopping, setShopping] = useState([]); // [{id,name,qty}]
+  // Kitchen Firestore
+  const [shopping, setShopping] = useState([]);
   const [kitchenBooted, setKitchenBooted] = useState(false);
 
-  // Staff tasks (simple + stable)
+  // Price benchmark results (local UI state)
+  // map: itemName -> {loading, best, items, error}
+  const [priceResults, setPriceResults] = useState({});
+  const [priceBatchLoading, setPriceBatchLoading] = useState(false);
+
+  // Staff
   const STAFF = useMemo(() => ([
     { id: "jabu", name: "Jabu", role: "Housekeeping", whatsapp: "27798024735" },
     { id: "lisa", name: "Lisa", role: "Home Maintenance", whatsapp: "27635650731" }
@@ -92,21 +158,15 @@ export default function App() {
   const [tasks, setTasks] = useState({ jabu: [], lisa: [] });
   const [activeStaff, setActiveStaff] = useState(null);
 
-  /* ---------------------------
-     Boot: auth + base docs
-  ---------------------------- */
+  /* Boot */
   useEffect(() => {
     (async () => {
       try {
         await signInAnonymously(auth);
 
-        // Ensure base docs exist
-        await setDoc(doc(db, "rosie", "state"), { bootedAt: Date.now(), v: "31.6.0" }, { merge: true });
-
-        // Kitchen doc
+        await setDoc(doc(db, "rosie", "state"), { bootedAt: Date.now(), v: "31.6.1" }, { merge: true });
         await setDoc(doc(db, "rosie", "kitchen"), { shopping: [] }, { merge: true });
 
-        // Staff docs
         for (const s of STAFF) {
           await setDoc(doc(db, "rosie", "tasks", "people", s.id), { items: [] }, { merge: true });
         }
@@ -119,9 +179,7 @@ export default function App() {
     })();
   }, [STAFF]);
 
-  /* ---------------------------
-     Firestore listeners
-  ---------------------------- */
+  /* Listeners */
   useEffect(() => {
     if (!ready) return;
 
@@ -147,9 +205,7 @@ export default function App() {
     };
   }, [ready, STAFF]);
 
-  /* ---------------------------
-     Staff helpers
-  ---------------------------- */
+  /* Staff helpers */
   const addTask = useCallback(async (staffId, title) => {
     if (!title || !title.trim()) return;
     const ref = doc(db, "rosie", "tasks", "people", staffId);
@@ -179,13 +235,10 @@ export default function App() {
       ``,
       `Please reply “Done” when completed. Thanks.`
     ];
-    const msg = lines.join("\n");
-    safeOpen(`https://wa.me/${staff.whatsapp}?text=${encodeURIComponent(msg)}`);
+    safeOpen(`https://wa.me/${staff.whatsapp}?text=${encodeURIComponent(lines.join("\n"))}`);
   }, [tasks]);
 
-  /* ---------------------------
-     Kitchen helpers
-  ---------------------------- */
+  /* Kitchen helpers */
   const addShoppingItem = useCallback(async (name, qty = "1") => {
     if (!name || !name.trim()) return;
     const ref = doc(db, "rosie", "kitchen");
@@ -198,16 +251,66 @@ export default function App() {
     await updateDoc(ref, { shopping: arrayRemove(item) });
   }, []);
 
-  /* ---------------------------
-     Pages
-  ---------------------------- */
+  /* Price fetching (benchmark) */
+  const fetchPriceForItem = useCallback(async (itemName) => {
+    const name = (itemName || "").trim();
+    if (!name) return;
+
+    setPriceResults((prev) => ({
+      ...prev,
+      [name]: { loading: true, best: null, items: [], error: "" }
+    }));
+
+    try {
+      const result = await fetchBenchmarkPriceSerpApi(name);
+
+      if (!result.ok) {
+        const msg =
+          result.reason === "NO_KEY"
+            ? "No API key set. Add REACT_APP_SERPAPI_KEY in Vercel to fetch benchmark prices."
+            : `Price fetch failed (${result.reason}).`;
+
+        setPriceResults((prev) => ({
+          ...prev,
+          [name]: { loading: false, best: null, items: [], error: msg }
+        }));
+        return;
+      }
+
+      setPriceResults((prev) => ({
+        ...prev,
+        [name]: { loading: false, best: result.best, items: result.items, error: "" }
+      }));
+    } catch (e) {
+      setPriceResults((prev) => ({
+        ...prev,
+        [name]: { loading: false, best: null, items: [], error: e?.message || "Price fetch failed." }
+      }));
+    }
+  }, []);
+
+  const fetchAllPrices = useCallback(async () => {
+    if (!shopping.length) return;
+
+    setPriceBatchLoading(true);
+    try {
+      // Sequential to avoid rate limits
+      for (const it of shopping) {
+        await fetchPriceForItem(it.name);
+      }
+    } finally {
+      setPriceBatchLoading(false);
+    }
+  }, [shopping, fetchPriceForItem]);
+
+  /* UI */
   const TopBar = () => (
     <div style={{ padding: "18px 16px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/rosie.svg" alt="Rosie" style={{ width: 44, height: 44 }} />
         <div>
           <div style={{ fontWeight: 900, fontSize: 16, margin: 0 }}>Rosie PA</div>
-          <div className="small">V31.6 DOWNLOAD</div>
+          <div className="small">V31.6.1 DOWNLOAD</div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", opacity: 0.9 }}>
@@ -222,7 +325,9 @@ export default function App() {
       <div style={{ textAlign: "center", paddingTop: 6 }}>
         <img src="/rosie.svg" alt="Rosie" className="rosie-mascot" />
         <div style={{ fontWeight: 900, fontSize: 34, margin: "8px 0 4px" }}>Hi! I’m Rosie</div>
-        <div className="small" style={{ fontSize: 14, marginBottom: 16 }}>Your family PA — schedules, staff, kitchen & more.</div>
+        <div className="small" style={{ fontSize: 14, marginBottom: 16 }}>
+          Kitchen prices + recipes + staff tasks.
+        </div>
       </div>
 
       <div style={{ display: "grid", gap: 12 }}>
@@ -231,10 +336,10 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Icon glyph="🍽️" label="Kitchen" /><b>Kitchen OS</b>
             </div>
-            <span className="small">Shopping + Recipes + Prices</span>
+            <span className="small">Auto price benchmark + links</span>
           </div>
           <div className="small" style={{ marginTop: 8 }}>
-            Auto price search from your grocery list + recipe finder + trending buttons.
+            Fetch benchmark prices from search data API, plus store links.
           </div>
         </button>
 
@@ -298,7 +403,7 @@ export default function App() {
         <button className="btn-soft" onClick={onBack}><Icon glyph="←" label="Back" /> Back</button>
 
         <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontWeight: 900, fontSize: 18 }}>{staff.name}</div>
               <div className="small">{staff.role}</div>
@@ -349,12 +454,12 @@ export default function App() {
             <Icon glyph="🍽️" label="Kitchen" /> Kitchen OS
           </div>
           <div className="small" style={{ marginTop: 6 }}>
-            Shopping list sync + auto price search + recipe finder.
+            Shopping list sync + benchmark price fetch + recipe finder.
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
             <button className="btn" onClick={() => setView("shopping")}><Icon glyph="🛒" label="Shopping" /> Shopping List</button>
-            <button className="btn" onClick={() => setView("prices")}><Icon glyph="💰" label="Prices" /> Auto Price Search</button>
+            <button className="btn" onClick={() => setView("prices")}><Icon glyph="💰" label="Prices" /> Fetch Prices + Links</button>
             <button className="btn" onClick={() => setView("recipes")}><Icon glyph="🍰" label="Recipes" /> Recipe Finder</button>
           </div>
         </div>
@@ -382,9 +487,9 @@ export default function App() {
           <Icon glyph="🛒" label="Shopping" /> Shopping List
         </div>
 
-        <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+        <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Add item (e.g. milk)" />
-          <input className="input" style={{ maxWidth: 90 }} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="Qty" />
+          <input className="input" style={{ maxWidth: 110 }} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="Qty" />
           <button className="btn" onClick={async () => { await addShoppingItem(name, qty); setName(""); setQty("1"); }}>
             <Icon glyph="＋" label="Add" />
           </button>
@@ -406,74 +511,130 @@ export default function App() {
   };
 
   const PriceSearch = () => {
-    const items = shopping.map(it => `${it.name} ${it.qty ? `x${it.qty}` : ""}`.trim());
     const [selected, setSelected] = useState(null);
-
-    const openAll = () => {
-      // browsers often block opening too many tabs, so we open a small set safely
-      const maxTabs = 6;
-      const toOpen = shopping.slice(0, maxTabs).map(it => it.name);
-      toOpen.forEach((name) => {
-        const links = buildRetailerSearchLinks(name);
-        // open only Google link per item to reduce tab spam
-        safeOpen(links[0].url);
-      });
-    };
 
     return (
       <div className="card">
         <div style={{ fontWeight: 900, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
-          <Icon glyph="💰" label="Prices" /> Auto Price Search (From Grocery List)
+          <Icon glyph="💰" label="Prices" /> Benchmark Prices + Links
         </div>
+
         <div className="small" style={{ marginTop: 6 }}>
-          This uses safe link-outs (no scraping). Tap an item to get store links. Use “Auto Open” to open quick searches.
+          Rosie fetches a benchmark price from a search data API (if configured) and always provides store links.
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="btn" onClick={openAll}><Icon glyph="⚡" label="Auto" /> Auto Open (Top 6 items)</button>
-          <button className="btn-soft" onClick={() => setSelected(null)}><Icon glyph="🧼" label="Clear" /> Clear</button>
+          <button className="btn" onClick={fetchAllPrices} disabled={priceBatchLoading || !shopping.length}>
+            <Icon glyph="⚡" label="Auto" /> {priceBatchLoading ? "Fetching…" : "Fetch Prices for All"}
+          </button>
+          <button className="btn-soft" onClick={() => setSelected(null)}>
+            <Icon glyph="🧼" label="Clear" /> Clear Selection
+          </button>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          {shopping.length === 0 && <div className="small">Add groceries first, then run price search.</div>}
+        {!SERP_KEY && (
+          <div className="card" style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 900 }}>Benchmark fetch not enabled</div>
+            <div className="small" style={{ marginTop: 6 }}>
+              Add <b>REACT_APP_SERPAPI_KEY</b> in Vercel env vars to enable in-app benchmark prices.
+              You still have store links below.
+            </div>
+          </div>
+        )}
 
-          {shopping.map(it => (
-            <button
-              key={it.id}
-              className="list-item"
-              style={{ width: "100%", border: "none", cursor: "pointer", textAlign: "left" }}
-              onClick={() => setSelected(it.name)}
-            >
-              <div>
-                {it.name} <span className="small">x{it.qty}</span>
-              </div>
-              <Icon glyph="→" label="Open links" />
-            </button>
-          ))}
+        <div style={{ marginTop: 12 }}>
+          {shopping.length === 0 && <div className="small">Add groceries first.</div>}
+
+          {shopping.map(it => {
+            const name = it.name;
+            const pr = priceResults[name] || null;
+            const best = pr?.best || null;
+
+            return (
+              <button
+                key={it.id}
+                className="list-item"
+                style={{ width: "100%", border: "none", cursor: "pointer", textAlign: "left" }}
+                onClick={() => setSelected(name)}
+              >
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div>
+                    {name} <span className="small">x{it.qty}</span>
+                  </div>
+                  {pr?.loading && <span className="small">Fetching benchmark…</span>}
+                  {!pr?.loading && best?.priceText && (
+                    <span className="small">
+                      Benchmark: <b>{best.priceText}</b> • {best.source || "Source"}
+                    </span>
+                  )}
+                  {!pr?.loading && pr?.error && (
+                    <span className="small" style={{ color: "#b91c1c" }}>{pr.error}</span>
+                  )}
+                </div>
+                <Icon glyph="→" label="Details" />
+              </button>
+            );
+          })}
         </div>
 
         {selected && (
           <div style={{ marginTop: 12 }} className="card">
             <div style={{ fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="🔎" label="Search" /> Price Links: <span style={{ fontWeight: 900 }}>{selected}</span>
+              <Icon glyph="🔎" label="Selected" /> {selected}
             </div>
-            <div className="small" style={{ marginTop: 6 }}>
-              Tap a store to search prices for this item.
-            </div>
-            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-              {buildRetailerSearchLinks(selected).map((l) => (
-                <button key={l.name} className="btn-soft" onClick={() => safeOpen(l.url)} style={{ textAlign: "left" }}>
-                  <b>{l.name}</b>
-                  <div className="small" style={{ marginTop: 4, wordBreak: "break-word" }}>{l.url}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {shopping.length > 0 && (
-          <div style={{ marginTop: 12 }} className="small">
-            Tip: If you want “actual live prices inside Rosie”, you need a legal pricing API or retailer integration.
+            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn" onClick={() => fetchPriceForItem(selected)}>
+                <Icon glyph="📡" label="Fetch" /> Fetch Benchmark
+              </button>
+              <button className="btn-soft" onClick={() => safeOpen(`https://www.google.com/search?q=${encodeURIComponent(selected + " price South Africa")}`)}>
+                <Icon glyph="🌍" label="Google" /> Open Google
+              </button>
+            </div>
+
+            {/* Best + sources */}
+            {priceResults[selected]?.best && (
+              <div style={{ marginTop: 12 }} className="card">
+                <div style={{ fontWeight: 900 }}>Benchmark Result</div>
+                <div className="small" style={{ marginTop: 6 }}>
+                  <b>{priceResults[selected].best.priceText || "Price"}</b> • {priceResults[selected].best.source || "Source"}
+                </div>
+                <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button className="btn" onClick={() => safeOpen(priceResults[selected].best.link)}>
+                    <Icon glyph="🔗" label="Open" /> Open Link
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontWeight: 900 }}>Store Links</div>
+              <div className="small" style={{ marginTop: 6 }}>Tap a store to search for this item.</div>
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                {buildRetailerSearchLinks(selected).map((l) => (
+                  <button key={l.name} className="btn-soft" onClick={() => safeOpen(l.url)} style={{ textAlign: "left" }}>
+                    <b>{l.name}</b>
+                    <div className="small" style={{ marginTop: 4, wordBreak: "break-word" }}>{l.url}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Raw results list */}
+            {priceResults[selected]?.items?.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 900 }}>More Results</div>
+                <div className="small" style={{ marginTop: 6 }}>These are the top results returned by the search data API.</div>
+                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                  {priceResults[selected].items.slice(0, 8).map((r, idx) => (
+                    <button key={`${r.link}_${idx}`} className="btn-soft" onClick={() => safeOpen(r.link)} style={{ textAlign: "left" }}>
+                      <div style={{ fontWeight: 900 }}>{r.priceText || "Price"}</div>
+                      <div className="small">{r.source || "Source"} • {r.title || "Result"}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -493,7 +654,7 @@ export default function App() {
       setLoading(true);
       try {
         const results = await fetchMealDbSearch(query);
-        setMeals(results.slice(0, 10)); // show up to 10
+        setMeals(results.slice(0, 10));
       } catch (e) {
         setErr(e?.message || "Recipe search failed.");
       } finally {
@@ -503,9 +664,8 @@ export default function App() {
 
     const openTrending = (topic) => {
       const base = `${topic} recipe`;
-      safeOpen(`https://www.google.com/search?q=${encodeURIComponent(`best 5 star ${base}`)}`);
+      safeOpen(`https://www.google.com/search?q=${encodeURIComponent(`best ${base}`)}`);
       safeOpen(`https://www.youtube.com/results?search_query=${encodeURIComponent(`viral ${base}`)}`);
-      // Not scraping; just opening searches
       safeOpen(`https://www.tiktok.com/search?q=${encodeURIComponent(`viral ${base}`)}`);
       safeOpen(`https://www.instagram.com/explore/tags/${encodeURIComponent(topic.replace(/\s+/g, ""))}/`);
     };
@@ -515,12 +675,13 @@ export default function App() {
         <div style={{ fontWeight: 900, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
           <Icon glyph="🍰" label="Recipes" /> Recipe Finder
         </div>
+
         <div className="small" style={{ marginTop: 6 }}>
-          Type a recipe name. Rosie fetches results and also provides Trending/Viral search buttons (no scraping).
+          Rosie finds recipes and gives you trending/viral search buttons (no scraping required).
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
-          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. Chicken Alfredo / Brownies / Kids Pasta" />
+        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. Brownies / Kids pasta / Chicken curry" />
           <button className="btn" onClick={search}><Icon glyph="🔎" label="Search" /></button>
         </div>
 
@@ -534,7 +695,7 @@ export default function App() {
         {err && <div className="small" style={{ marginTop: 12, color: "#b91c1c" }}>{err}</div>}
 
         <div style={{ marginTop: 12 }}>
-          {(!loading && meals.length === 0) && <div className="small">No recipes yet — search above.</div>}
+          {!loading && meals.length === 0 && <div className="small">No recipes yet — search above.</div>}
 
           {meals.map((m) => (
             <div key={m.idMeal} className="card" style={{ marginBottom: 12 }}>
@@ -556,7 +717,10 @@ export default function App() {
                   </div>
                 </div>
 
-                <button className="btn-soft" onClick={() => m.strSource ? safeOpen(m.strSource) : safeOpen(`https://www.google.com/search?q=${encodeURIComponent(m.strMeal + " recipe")}`)}>
+                <button
+                  className="btn-soft"
+                  onClick={() => m.strSource ? safeOpen(m.strSource) : safeOpen(`https://www.google.com/search?q=${encodeURIComponent(m.strMeal + " recipe")}`)}
+                >
                   <Icon glyph="📄" label="Open" />
                 </button>
               </div>
@@ -566,8 +730,8 @@ export default function App() {
               </div>
 
               <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button className="btn" onClick={() => safeOpen(`https://www.google.com/search?q=${encodeURIComponent(`best 5 star ${m.strMeal} recipe`)}`)}>
-                  <Icon glyph="⭐" label="5-star" /> Find 5-Star Versions
+                <button className="btn" onClick={() => safeOpen(`https://www.google.com/search?q=${encodeURIComponent(`best ${m.strMeal} recipe`)}`)}>
+                  <Icon glyph="⭐" label="Best" /> Best Versions
                 </button>
                 <button className="btn-soft" onClick={() => openTrending(m.strMeal)}>
                   <Icon glyph="🔥" label="Viral" /> Viral Searches
@@ -575,10 +739,6 @@ export default function App() {
               </div>
             </div>
           ))}
-        </div>
-
-        <div className="small" style={{ marginTop: 10 }}>
-          Note: “Best 5-star recipe” is done by opening safe searches and curated results (no scraping).
         </div>
       </div>
     );
@@ -591,10 +751,10 @@ export default function App() {
           <Icon glyph="⚙️" label="Setup" /> Setup
         </div>
         <div className="small" style={{ marginTop: 8 }}>
-          Rosie PA — <b>V31.6 DOWNLOAD</b>
+          Rosie PA — <b>V31.6.1 DOWNLOAD</b>
         </div>
         <div className="small" style={{ marginTop: 8 }}>
-          Vercel Node Engine: <b>24.x</b>
+          Benchmark pricing: {SERP_KEY ? <b>Enabled</b> : <b>Not enabled</b>} (REACT_APP_SERPAPI_KEY)
         </div>
       </div>
     </div>
