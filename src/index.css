@@ -1,13 +1,15 @@
-/* Rosie PA – V31.6 DOWNLOAD */
+/* Rosie PA – V31.7.0 */
+/* Global full-bleed mobile layout with confetti background */
 
 :root{
   --cream: #fff6eb;
   --card: #ffffff;
-  --shadow: 0 12px 34px rgba(0,0,0,0.14);
-  --soft-shadow: 0 8px 22px rgba(0,0,0,0.10);
+  --shadow: 0 10px 30px rgba(0,0,0,0.14);
+  --soft-shadow: 0 8px 24px rgba(0,0,0,0.10);
   --accent: #ff6b4a;
-  --text: #111827;
-  --muted: rgba(17,24,39,0.75);
+  --text: #0f172a;              /* darker for readability */
+  --muted: rgba(15,23,42,0.72); /* darker muted */
+  --stroke: rgba(0,0,0,0.10);
 }
 
 html, body, #root {
@@ -17,47 +19,125 @@ html, body, #root {
 }
 
 body{
-  font-family: "Fredoka", system-ui, -apple-system, BlinkMacSystemFont,
-               "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: "Fredoka", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--text);
   background-color: var(--cream);
+
+  /* IMPORTANT: in CRA, keep assets inside src and reference relatively */
   background-image: url("./assets/confetti.png");
   background-repeat: repeat;
   background-size: 360px 360px;
-  position: relative;
+
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-body::before{
-  content: "";
-  position: fixed;
-  inset: 0;
-  background: rgba(255,246,235,0.72);
-  z-index: -1;
-}
-
 *{ box-sizing: border-box; }
+
 button{ font-family: inherit; }
+
+.app-root{
+  min-height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
 
 .page{
   flex: 1;
   width: 100%;
   padding: 18px 16px;
-  padding-bottom: 140px;
+  padding-bottom: 150px; /* space for bottom nav */
+}
+
+.center{ text-align: center; }
+
+.rosie-mascot{
+  width: 160px;
+  max-width: 62vw;
+  height: auto;
+  display: block;
+  margin: 8px auto 10px;
+  filter: drop-shadow(0 14px 32px rgba(0,0,0,0.12));
+}
+
+.hi{
+  font-size: 34px;
+  font-weight: 1000;
+  margin: 8px 0 6px;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 0 rgba(255,255,255,0.65);
+}
+
+.sub{
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--muted);
+  margin: 0 0 16px;
+  text-shadow: 0 2px 0 rgba(255,255,255,0.55);
 }
 
 .card{
-  background: rgba(255,255,255,0.95);
+  background: rgba(255,255,255,0.94);
+  border: 1px solid var(--stroke);
   border-radius: 26px;
   box-shadow: var(--soft-shadow);
   padding: 16px;
 }
 
+.card-title{
+  font-size: 12px;
+  font-weight: 1000;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(15,23,42,0.72);
+  margin: 0 0 10px;
+}
+
 .small{
   font-size: 12px;
-  font-weight: 800;
-  color: var(--muted);
+  font-weight: 900;
+  color: rgba(15,23,42,0.70);
+}
+
+.input{
+  width: 100%;
+  border: 1px solid rgba(0,0,0,0.10);
+  outline: none;
+  border-radius: 16px;
+  padding: 12px 12px;
+  background: rgba(255,255,255,0.94);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.btn{
+  border: none;
+  background: var(--accent);
+  color: white;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-weight: 1000;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(255,107,74,0.30);
+}
+
+.btn:disabled{
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-soft{
+  border: 1px solid rgba(0,0,0,0.10);
+  background: rgba(255,255,255,0.92);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 16px;
+  font-weight: 1000;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.06);
 }
 
 .list-item{
@@ -66,35 +146,36 @@ button{ font-family: inherit; }
   justify-content: space-between;
   gap: 10px;
   padding: 12px 12px;
-  background: rgba(255,255,255,0.90);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.06);
   border-radius: 18px;
-  font-weight: 900;
+  font-weight: 1000;
   font-size: 14px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.06);
-  margin-bottom: 10px;
 }
 
-.rosie-mascot{
-  width: 150px;
-  max-width: 62vw;
-  height: auto;
-  display: block;
-  margin: 8px auto 12px;
-  filter: drop-shadow(0 16px 36px rgba(0,0,0,0.16));
-}
-
-.bottom-nav{
+.bottom-nav-wrap{
   position: fixed;
   left: 14px;
   right: 14px;
   bottom: calc(14px + env(safe-area-inset-bottom));
-  background: rgba(255,255,255,0.96);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.bottom-nav{
+  width: min(560px, 100%);
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(14px);
   border-radius: 28px;
-  padding: 10px;
+  padding: 10px 10px;
   box-shadow: var(--shadow);
   display: flex;
   justify-content: space-between;
   gap: 8px;
+  pointer-events: auto;
+  border: 1px solid rgba(0,0,0,0.08);
 }
 
 .nav-btn{
@@ -108,42 +189,20 @@ button{ font-family: inherit; }
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-weight: 900;
 }
 
 .nav-btn.active{
-  background: rgba(0,0,0,0.04);
+  background: rgba(0,0,0,0.05);
 }
 
-.input{
-  width: 100%;
-  border: none;
-  outline: none;
-  padding: 12px 14px;
-  border-radius: 999px;
-  box-shadow: var(--soft-shadow);
-  font-weight: 800;
-  font-size: 15px;
+.nav-label{
+  font-size: 10px;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(15,23,42,0.70);
 }
 
-.btn{
-  border: none;
-  background: var(--accent);
-  color: white;
-  border-radius: 999px;
-  padding: 12px 14px;
-  box-shadow: 0 10px 22px rgba(255,107,74,0.32);
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.btn-soft{
-  border: none;
-  background: rgba(255,255,255,0.96);
+.nav-btn.active .nav-label{
   color: var(--text);
-  border-radius: 999px;
-  padding: 10px 12px;
-  box-shadow: var(--soft-shadow);
-  font-weight: 900;
-  cursor: pointer;
 }
