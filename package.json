@@ -1,6 +1,6 @@
 {
   "name": "rosie-family-pa",
-  "version": "31.7.0",
+  "version": "31.8.0",
   "private": true,
   "dependencies": {
     "firebase": "^10.7.1",
@@ -15,7 +15,7 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
-  "description": "Rosie Personal Assistant – V31.7.0 (Smart Search + Family Grid + Kids Tasks)",
+  "description": "Rosie PA – V31.8.0 (Kids categories: School+Extramurals only + Diary reinstated)",
   "engines": {
     "node": "24.x",
     "npm": "11.x"
