@@ -1,5 +1,4 @@
-/* Rosie PA – V31.7.0 */
-/* Global full-bleed mobile layout with confetti background */
+/* Rosie PA – V31.8.0 */
 
 :root{
   --cream: #fff6eb;
@@ -7,8 +6,8 @@
   --shadow: 0 10px 30px rgba(0,0,0,0.14);
   --soft-shadow: 0 8px 24px rgba(0,0,0,0.10);
   --accent: #ff6b4a;
-  --text: #0f172a;              /* darker for readability */
-  --muted: rgba(15,23,42,0.72); /* darker muted */
+  --text: #0f172a;
+  --muted: rgba(15,23,42,0.72);
   --stroke: rgba(0,0,0,0.10);
 }
 
@@ -22,18 +21,14 @@ body{
   font-family: "Fredoka", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--text);
   background-color: var(--cream);
-
-  /* IMPORTANT: in CRA, keep assets inside src and reference relatively */
   background-image: url("./assets/confetti.png");
   background-repeat: repeat;
   background-size: 360px 360px;
-
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 *{ box-sizing: border-box; }
-
 button{ font-family: inherit; }
 
 .app-root{
@@ -41,14 +36,13 @@ button{ font-family: inherit; }
   width: 100%;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
 }
 
 .page{
   flex: 1;
   width: 100%;
   padding: 18px 16px;
-  padding-bottom: 150px; /* space for bottom nav */
+  padding-bottom: 165px;
 }
 
 .center{ text-align: center; }
@@ -72,7 +66,7 @@ button{ font-family: inherit; }
 
 .sub{
   font-size: 15px;
-  font-weight: 900;
+  font-weight: 950;
   color: var(--muted);
   margin: 0 0 16px;
   text-shadow: 0 2px 0 rgba(255,255,255,0.55);
@@ -107,10 +101,10 @@ button{ font-family: inherit; }
   outline: none;
   border-radius: 16px;
   padding: 12px 12px;
-  background: rgba(255,255,255,0.94);
+  background: rgba(255,255,255,0.96);
   color: var(--text);
   font-size: 14px;
-  font-weight: 900;
+  font-weight: 950;
 }
 
 .btn{
@@ -151,6 +145,15 @@ button{ font-family: inherit; }
   border-radius: 18px;
   font-weight: 1000;
   font-size: 14px;
+}
+
+.badge{
+  font-size: 11px;
+  font-weight: 1000;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.10);
+  background: rgba(255,255,255,0.95);
 }
 
 .bottom-nav-wrap{
