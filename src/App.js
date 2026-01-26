@@ -12,7 +12,7 @@ import {
 } from "firebase/firestore";
 
 /* ---------------------------
-   Firebase config (yours)
+   Firebase config
 ---------------------------- */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCGqIAgtH4Y7oTMBo__VYQvVCdG_xR2kKo",
@@ -50,14 +50,9 @@ function waLink(e164, text) {
 
 /* ---------------------------
    Smart Search (FREE)
-   - Generates store search links
-   - No APIs, no scraping
 ---------------------------- */
 function buildSmartSearchLinks(item) {
   const q = encodeURIComponent(item);
-
-  // Prefer store in-site searches where possible,
-  // otherwise use Google site queries (reliable, free, no key).
   return [
     { name: "Best Web Search", url: `https://www.google.com/search?q=${q}+price+South+Africa` },
     { name: "Checkers", url: `https://www.google.com/search?q=${q}+site:checkers.co.za` },
@@ -70,7 +65,6 @@ function buildSmartSearchLinks(item) {
 
 /* ---------------------------
    Recipes (FREE)
-   TheMealDB: open/free recipe DB
 ---------------------------- */
 async function fetchMealDbSearch(query) {
   const url = `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(query)}`;
@@ -90,6 +84,7 @@ export default function App() {
   // Kitchen
   const [shopping, setShopping] = useState([]);
   const [kitchenBooted, setKitchenBooted] = useState(false);
+  const [smartSelectedItem, setSmartSelectedItem] = useState(null);
 
   // People (Family + Staff)
   const PEOPLE = useMemo(() => ([
@@ -107,10 +102,19 @@ export default function App() {
   const STAFF = useMemo(() => PEOPLE.filter(p => p.type === "staff"), [PEOPLE]);
 
   const [activePerson, setActivePerson] = useState(null);
-  const [tasks, setTasks] = useState({}); // personId -> items[]
 
-  // SMART SEARCH state (local)
-  const [smartSelectedItem, setSmartSelectedItem] = useState(null);
+  // TASKS: personId -> items[]
+  const [tasks, setTasks] = useState({});
+
+  // Diary (LOG)
+  const DIARY_BOOKS = useMemo(() => ([
+    { id: "personal", name: "Personal Diary" },
+    { id: "meds", name: "Meds Diary" },
+    { id: "staff", name: "Staff Diary" }
+  ]), []);
+
+  const [activeBook, setActiveBook] = useState("personal");
+  const [diary, setDiary] = useState({ personal: [], meds: [], staff: [] });
 
   /* Boot */
   useEffect(() => {
@@ -118,12 +122,23 @@ export default function App() {
       try {
         await signInAnonymously(auth);
 
-        await setDoc(doc(db, "rosie", "state"), { bootedAt: Date.now(), v: "31.7.0" }, { merge: true });
+        await setDoc(doc(db, "rosie", "state"), { bootedAt: Date.now(), v: "31.8.0" }, { merge: true });
         await setDoc(doc(db, "rosie", "kitchen"), { shopping: [] }, { merge: true });
 
-        // Ensure task docs exist for all people
+        // Standard task lists for adults + staff
         for (const p of PEOPLE) {
           await setDoc(doc(db, "rosie", "tasks", "people", p.id), { items: [] }, { merge: true });
+        }
+
+        // Kids must have two lists ONLY: school + extramurals
+        await setDoc(doc(db, "rosie", "tasks", "people", "rayhaan_school"), { items: [] }, { merge: true });
+        await setDoc(doc(db, "rosie", "tasks", "people", "rayhaan_extra"), { items: [] }, { merge: true });
+        await setDoc(doc(db, "rosie", "tasks", "people", "zaara_school"), { items: [] }, { merge: true });
+        await setDoc(doc(db, "rosie", "tasks", "people", "zaara_extra"), { items: [] }, { merge: true });
+
+        // Diaries
+        for (const b of DIARY_BOOKS) {
+          await setDoc(doc(db, "rosie", "diary", b.id), { entries: [] }, { merge: true });
         }
 
         setReady(true);
@@ -132,7 +147,7 @@ export default function App() {
         setReady(true);
       }
     })();
-  }, [PEOPLE]);
+  }, [PEOPLE, DIARY_BOOKS]);
 
   /* Listeners */
   useEffect(() => {
@@ -144,12 +159,43 @@ export default function App() {
       setKitchenBooted(true);
     });
 
-    const unsubs = PEOPLE.map((p) =>
-      onSnapshot(doc(db, "rosie", "tasks", "people", p.id), (snap) => {
+    const unsubs = [];
+
+    // Normal tasks
+    for (const p of PEOPLE) {
+      unsubs.push(
+        onSnapshot(doc(db, "rosie", "tasks", "people", p.id), (snap) => {
+          const d = snap.exists() ? snap.data() : {};
+          setTasks((prev) => ({
+            ...prev,
+            [p.id]: Array.isArray(d.items) ? d.items : []
+          }));
+        })
+      );
+    }
+
+    // Kids tasks: 2 categories only
+    const kidDocs = ["rayhaan_school", "rayhaan_extra", "zaara_school", "zaara_extra"];
+    for (const id of kidDocs) {
+      unsubs.push(
+        onSnapshot(doc(db, "rosie", "tasks", "people", id), (snap) => {
+          const d = snap.exists() ? snap.data() : {};
+          setTasks((prev) => ({
+            ...prev,
+            [id]: Array.isArray(d.items) ? d.items : []
+          }));
+        })
+      );
+    }
+
+    // Diaries
+    const diaryUnsubs = DIARY_BOOKS.map((b) =>
+      onSnapshot(doc(db, "rosie", "diary", b.id), (snap) => {
         const d = snap.exists() ? snap.data() : {};
-        setTasks((prev) => ({
+        const entries = Array.isArray(d.entries) ? d.entries : [];
+        setDiary((prev) => ({
           ...prev,
-          [p.id]: Array.isArray(d.items) ? d.items : []
+          [b.id]: entries
         }));
       })
     );
@@ -157,8 +203,9 @@ export default function App() {
     return () => {
       unsubKitchen();
       unsubs.forEach((u) => u && u());
+      diaryUnsubs.forEach((u) => u && u());
     };
-  }, [ready, PEOPLE]);
+  }, [ready, PEOPLE, DIARY_BOOKS]);
 
   /* Task helpers */
   const addTask = useCallback(async (personId, title) => {
@@ -206,6 +253,23 @@ export default function App() {
     await updateDoc(ref, { shopping: arrayRemove(item) });
   }, []);
 
+  /* Diary helpers */
+  const addDiaryEntry = useCallback(async (bookId, text) => {
+    if (!text || !text.trim()) return;
+    const ref = doc(db, "rosie", "diary", bookId);
+    const entry = {
+      id: nowId(),
+      text: text.trim(),
+      createdAt: Date.now()
+    };
+    await setDoc(ref, { entries: arrayUnion(entry) }, { merge: true });
+  }, []);
+
+  const deleteDiaryEntry = useCallback(async (bookId, entry) => {
+    const ref = doc(db, "rosie", "diary", bookId);
+    await updateDoc(ref, { entries: arrayRemove(entry) });
+  }, []);
+
   /* ---------------------------
      UI Components
   ---------------------------- */
@@ -214,8 +278,8 @@ export default function App() {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <img src="/rosie.svg" alt="Rosie" style={{ width: 44, height: 44 }} />
         <div>
-          <div style={{ fontWeight: 1000, fontSize: 16, margin: 0 }}>Rosie PA</div>
-          <div className="small">V31.7.0 — Smart Search + Family</div>
+          <div style={{ fontWeight: 1000, fontSize: 16 }}>Rosie PA</div>
+          <div className="small">V31.8.0 — Kids School/Extra + Diary</div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", opacity: 0.9 }}>
@@ -230,40 +294,40 @@ export default function App() {
       <div className="center" style={{ paddingTop: 4 }}>
         <img src="/rosie.svg" alt="Rosie" className="rosie-mascot" />
         <div className="hi">Hi! I’m Rosie</div>
-        <div className="sub">Family tasks, staff tasks, shopping, smart search, and recipes.</div>
+        <div className="sub">Family tasks, kids school/extramurals, staff tasks, diary, shopping & smart search.</div>
       </div>
 
       <div style={{ display: "grid", gap: 12 }}>
         <button className="card" onClick={() => setTab("HUB")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="👨‍👩‍👧‍👦" label="Family" /><b style={{ fontWeight: 1000 }}>Family & Staff Hub</b>
+              <Icon glyph="👨‍👩‍👧‍👦" label="Family" /><b style={{ fontWeight: 1000 }}>Hub</b>
             </div>
-            <span className="small">Kids + employees</span>
+            <span className="small">Kids + staff</span>
           </div>
           <div className="small" style={{ marginTop: 8 }}>
-            Manage tasks for Rayhaan, Zaara, Jabu, and Lisa.
+            Kids tasks are now split into School & Extramurals only.
+          </div>
+        </button>
+
+        <button className="card" onClick={() => setTab("LOG")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon glyph="📖" label="Log" /><b style={{ fontWeight: 1000 }}>Diary</b>
+            </div>
+            <span className="small">Personal / Meds / Staff</span>
+          </div>
+          <div className="small" style={{ marginTop: 8 }}>
+            Journal style diary books restored.
           </div>
         </button>
 
         <button className="card" onClick={() => setTab("KITCHEN")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="🍽️" label="Kitchen" /><b style={{ fontWeight: 1000 }}>Kitchen OS</b>
+              <Icon glyph="🍽️" label="Kitchen" /><b style={{ fontWeight: 1000 }}>Kitchen</b>
             </div>
-            <span className="small">Shopping + Smart Search</span>
-          </div>
-          <div className="small" style={{ marginTop: 8 }}>
-            Add groceries, then open smart store searches instantly.
-          </div>
-        </button>
-
-        <button className="card" onClick={() => setTab("SETUP")} style={{ border: "none", textAlign: "left", cursor: "pointer" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="⚙️" label="Setup" /><b style={{ fontWeight: 1000 }}>Setup</b>
-            </div>
-            <span className="small">Version info</span>
+            <span className="small">Shopping + smart search</span>
           </div>
         </button>
       </div>
@@ -276,10 +340,10 @@ export default function App() {
         <div className="page">
           <div className="card">
             <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon glyph="👨‍👩‍👧‍👦" label="Hub" /> Family & Staff Hub
+              <Icon glyph="👨‍👩‍👧‍👦" label="Hub" /> Hub
             </div>
             <div className="small" style={{ marginTop: 6 }}>
-              Tap a person to manage their tasks.
+              Kids show TWO tabs only: School & Extramurals.
             </div>
           </div>
 
@@ -333,13 +397,21 @@ export default function App() {
     return <PersonDetail person={activePerson} onBack={() => setActivePerson(null)} />;
   };
 
+  /* ✅ CHILD LOGIC ADDED HERE */
   const PersonDetail = ({ person, onBack }) => {
-    const [newTask, setNewTask] = useState("");
-    const list = tasks[person.id] || [];
+    const isChild = person.type === "child";
+    const canWhatsApp = person.type === "staff" && person.whatsapp;
+
+    const [kidTab, setKidTab] = useState("school"); // school | extra
+    const taskDocId = isChild
+      ? `${person.id}_${kidTab === "school" ? "school" : "extra"}`
+      : person.id;
+
+    const list = tasks[taskDocId] || [];
     const open = list.filter(t => !t.completed);
     const done = list.filter(t => t.completed);
 
-    const canWhatsApp = person.type === "staff" && person.whatsapp;
+    const [newTask, setNewTask] = useState("");
 
     return (
       <div className="page">
@@ -361,17 +433,34 @@ export default function App() {
             )}
           </div>
 
+          {isChild && (
+            <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                className={kidTab === "school" ? "btn" : "btn-soft"}
+                onClick={() => setKidTab("school")}
+              >
+                <Icon glyph="🎒" label="School" /> SCHOOL
+              </button>
+              <button
+                className={kidTab === "extra" ? "btn" : "btn-soft"}
+                onClick={() => setKidTab("extra")}
+              >
+                <Icon glyph="⚽" label="Extramurals" /> EXTRAMURALS
+              </button>
+            </div>
+          )}
+
           <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
             <input
               className="input"
               value={newTask}
               onChange={(e) => setNewTask(e.target.value)}
-              placeholder={`Add task for ${person.name}...`}
+              placeholder={isChild ? `Add ${kidTab === "school" ? "school" : "extramural"} task...` : `Add task...`}
             />
             <button
               className="btn"
               onClick={async () => {
-                await addTask(person.id, newTask);
+                await addTask(taskDocId, newTask);
                 setNewTask("");
               }}
             >
@@ -382,29 +471,24 @@ export default function App() {
           <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div className="small"><b style={{ fontWeight: 1000 }}>Open:</b> {open.length}</div>
             <div className="small"><b style={{ fontWeight: 1000 }}>Done:</b> {done.length}</div>
+            {isChild && <span className="badge">{kidTab === "school" ? "SCHOOL" : "EXTRAMURALS"}</span>}
           </div>
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-          {list.length === 0 && (
-            <div className="card">
-              <div className="small">No tasks yet.</div>
-            </div>
-          )}
-
           {open.map(t => (
             <div key={t.id} className="list-item">
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <button className="btn-soft" onClick={() => toggleTask(person.id, t)}>
+                <button className="btn-soft" onClick={() => toggleTask(taskDocId, t)}>
                   <Icon glyph="❤️" label="Open" />
                 </button>
                 <div style={{ fontWeight: 1000 }}>{t.title}</div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn-soft" onClick={() => deleteTask(person.id, t)}>
+                <button className="btn-soft" onClick={() => deleteTask(taskDocId, t)}>
                   <Icon glyph="🗑️" label="Delete" />
                 </button>
-                <button className="btn-soft" onClick={() => toggleTask(person.id, t)}>
+                <button className="btn-soft" onClick={() => toggleTask(taskDocId, t)}>
                   <Icon glyph="✅" label="Done" />
                 </button>
               </div>
@@ -418,17 +502,23 @@ export default function App() {
                 {done.map(t => (
                   <div key={t.id} className="list-item" style={{ opacity: 0.75 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <button className="btn-soft" onClick={() => toggleTask(person.id, t)}>
+                      <button className="btn-soft" onClick={() => toggleTask(taskDocId, t)}>
                         <Icon glyph="✅" label="Done" />
                       </button>
                       <div style={{ fontWeight: 1000, textDecoration: "line-through" }}>{t.title}</div>
                     </div>
-                    <button className="btn-soft" onClick={() => deleteTask(person.id, t)}>
+                    <button className="btn-soft" onClick={() => deleteTask(taskDocId, t)}>
                       <Icon glyph="🗑️" label="Delete" />
                     </button>
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {list.length === 0 && (
+            <div className="card">
+              <div className="small">No tasks yet.</div>
             </div>
           )}
         </div>
@@ -443,10 +533,10 @@ export default function App() {
       <div className="page">
         <div className="card">
           <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
-            <Icon glyph="🍽️" label="Kitchen" /> Kitchen OS
+            <Icon glyph="🍽️" label="Kitchen" /> Kitchen
           </div>
           <div className="small" style={{ marginTop: 6 }}>
-            Shopping list + Smart Search + Recipe Finder (fully free).
+            Shopping list + Smart Search (free) + Recipe Finder.
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
@@ -454,7 +544,7 @@ export default function App() {
               <Icon glyph="🛒" label="Shopping" /> Shopping List
             </button>
             <button className="btn" onClick={() => setView("smartsearch")}>
-              <Icon glyph="🔎" label="Smart Search" /> Smart Search (Prices & Links)
+              <Icon glyph="🔎" label="Smart Search" /> Smart Search
             </button>
             <button className="btn" onClick={() => setView("recipes")}>
               <Icon glyph="🍰" label="Recipes" /> Recipe Finder
@@ -518,7 +608,7 @@ export default function App() {
         </div>
 
         <div className="small" style={{ marginTop: 8 }}>
-          Rosie generates the best store search links for each item. No paid services, no keys.
+          Rosie generates the best store search links for each item. No paid service.
         </div>
 
         <div style={{ marginTop: 12 }}>
@@ -550,7 +640,7 @@ export default function App() {
             </div>
 
             <div className="small" style={{ marginTop: 8 }}>
-              Tap a store to search for the best price.
+              Tap a store to search.
             </div>
 
             <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
@@ -570,16 +660,6 @@ export default function App() {
             <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button className="btn-soft" onClick={() => setSmartSelectedItem(null)}>
                 <Icon glyph="🧼" label="Close" /> Close
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  const links = buildSmartSearchLinks(smartSelectedItem);
-                  // Open “best web” + 2 top stores (keeps it sane on mobile)
-                  links.slice(0, 3).forEach(l => safeOpen(l.url));
-                }}
-              >
-                <Icon glyph="⚡" label="Open" /> Quick Open (3)
               </button>
             </div>
           </div>
@@ -623,7 +703,7 @@ export default function App() {
         </div>
 
         <div className="small" style={{ marginTop: 8 }}>
-          Search recipes + open trending/viral searches instantly (fully free).
+          Search recipes + open trending/viral searches (free).
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -680,13 +760,100 @@ export default function App() {
               <div className="small" style={{ marginTop: 10 }}>
                 {m.strInstructions ? `${m.strInstructions.slice(0, 220)}…` : "No instructions preview available."}
               </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
-              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button className="btn" onClick={() => safeOpen(`https://www.google.com/search?q=${encodeURIComponent(`best ${m.strMeal} recipe`)}`)}>
-                  <Icon glyph="⭐" label="Best" /> Best Versions
-                </button>
-                <button className="btn-soft" onClick={() => openTrending(m.strMeal)}>
-                  <Icon glyph="🔥" label="Viral" /> Viral Searches
+  /* ✅ DIARY REINSTATED */
+  const Log = () => {
+    const [text, setText] = useState("");
+
+    const entries = diary[activeBook] || [];
+    const sorted = [...entries].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    const exportText = () => {
+      const lines = [
+        `ROSIE DIARY EXPORT`,
+        `Book: ${activeBook.toUpperCase()}`,
+        `---`,
+        ...sorted.map(e => {
+          const d = new Date(e.createdAt);
+          return `[${d.toLocaleString()}] ${e.text}`;
+        })
+      ];
+      const blob = new Blob([lines.join("\n\n")], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      safeOpen(url);
+    };
+
+    return (
+      <div className="page">
+        <div className="card">
+          <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon glyph="📖" label="Diary" /> Diary / Logs
+          </div>
+          <div className="small" style={{ marginTop: 6 }}>
+            Journal books restored: Personal, Meds, Staff.
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {DIARY_BOOKS.map(b => (
+              <button
+                key={b.id}
+                className={activeBook === b.id ? "btn" : "btn-soft"}
+                onClick={() => setActiveBook(b.id)}
+              >
+                {b.name}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+            <textarea
+              className="input"
+              style={{ minHeight: 110, resize: "vertical", fontWeight: 950 }}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={`Write in ${activeBook}...`}
+            />
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                className="btn"
+                onClick={async () => {
+                  await addDiaryEntry(activeBook, text);
+                  setText("");
+                }}
+              >
+                <Icon glyph="✍️" label="Save" /> Save Entry
+              </button>
+              <button className="btn-soft" onClick={exportText}>
+                <Icon glyph="📤" label="Export" /> Export Text
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          {sorted.length === 0 && (
+            <div className="card">
+              <div className="small">No diary entries yet.</div>
+            </div>
+          )}
+
+          {sorted.map(e => (
+            <div key={e.id} className="card">
+              <div className="small" style={{ fontWeight: 1000 }}>
+                {new Date(e.createdAt).toLocaleString()}
+              </div>
+              <div style={{ marginTop: 8, fontWeight: 950, whiteSpace: "pre-wrap" }}>
+                {e.text}
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <button className="btn-soft" onClick={() => deleteDiaryEntry(activeBook, e)}>
+                  <Icon glyph="🗑️" label="Delete" /> Delete
                 </button>
               </div>
             </div>
@@ -704,15 +871,15 @@ export default function App() {
         </div>
 
         <div className="small" style={{ marginTop: 10 }}>
-          Rosie PA Version: <b style={{ fontWeight: 1000 }}>31.7.0</b>
+          Rosie PA Version: <b style={{ fontWeight: 1000 }}>31.8.0</b>
         </div>
 
         <div className="small" style={{ marginTop: 10 }}>
-          Smart Search mode is fully free (no APIs).
+          Kids tasks are now strictly: <b>SCHOOL</b> + <b>EXTRAMURALS</b>.
         </div>
 
         <div className="small" style={{ marginTop: 10 }}>
-          Firestore is live for: Shopping list + Tasks (Family & Staff).
+          Diary is restored under LOG tab.
         </div>
       </div>
     </div>
@@ -732,6 +899,7 @@ export default function App() {
     if (tab === "BRAIN") return <Brain />;
     if (tab === "KITCHEN") return <Kitchen />;
     if (tab === "HUB") return <Hub />;
+    if (tab === "LOG") return <Log />;
     return <Setup />;
   };
 
@@ -747,14 +915,19 @@ export default function App() {
             <span className="nav-label">Brain</span>
           </button>
 
+          <button className={`nav-btn ${tab === "HUB" ? "active" : ""}`} onClick={() => setTab("HUB")}>
+            <Icon glyph="👨‍👩‍👧‍👦" label="Hub" />
+            <span className="nav-label">Hub</span>
+          </button>
+
           <button className={`nav-btn ${tab === "KITCHEN" ? "active" : ""}`} onClick={() => { setTab("KITCHEN"); setActivePerson(null); }}>
             <Icon glyph="🍽️" label="Kitchen" />
             <span className="nav-label">Kitchen</span>
           </button>
 
-          <button className={`nav-btn ${tab === "HUB" ? "active" : ""}`} onClick={() => setTab("HUB")}>
-            <Icon glyph="👨‍👩‍👧‍👦" label="Hub" />
-            <span className="nav-label">Hub</span>
+          <button className={`nav-btn ${tab === "LOG" ? "active" : ""}`} onClick={() => { setTab("LOG"); setActivePerson(null); }}>
+            <Icon glyph="📖" label="Log" />
+            <span className="nav-label">Log</span>
           </button>
 
           <button className={`nav-btn ${tab === "SETUP" ? "active" : ""}`} onClick={() => { setTab("SETUP"); setActivePerson(null); }}>
